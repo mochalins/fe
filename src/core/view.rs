@@ -24,8 +24,7 @@ impl View {
     pub fn scroll_up(&mut self, rows: u16) {
         if self.row_offset >= rows {
             self.row_offset -= rows;
-        }
-        else {
+        } else {
             self.row_offset = 0;
         }
     }
@@ -37,8 +36,7 @@ impl View {
             if counter < self.row_offset {
                 counter += 1;
                 continue;
-            }
-            else if counter >= self.rows + self.row_offset {
+            } else if counter >= self.rows + self.row_offset {
                 break;
             }
 
