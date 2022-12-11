@@ -1,6 +1,9 @@
 use clap::Parser;
 use crossterm::{
-    cursor::{MoveTo, MoveToNextLine},
+    cursor::{
+        position, CursorShape, Hide, MoveDown, MoveLeft, MoveRight, MoveTo, MoveToNextLine, MoveUp,
+        RestorePosition, SavePosition, SetCursorShape, Show,
+    },
     event::{poll, read, Event, KeyCode},
     execute, queue,
     style::{Print, PrintStyledContent},
@@ -41,6 +44,7 @@ fn main() -> Result<()> {
     let mut stdout = stdout();
     enable_raw_mode()?;
     execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, SetCursorShape(CursorShape::Block))?;
 
     loop {
         if poll(Duration::from_millis(50))? {
@@ -49,11 +53,29 @@ fn main() -> Result<()> {
                     KeyCode::Char('q') => {
                         break;
                     }
+                    KeyCode::Char('j') => {
+                        execute!(stdout, MoveLeft(1))?;
+                    }
+                    KeyCode::Char('l') => {
+                        execute!(stdout, MoveRight(1))?;
+                    }
                     KeyCode::Char('k') => {
-                        view.scroll_down(1);
+                        if let Ok((_, crow)) = position() {
+                            if crow + 1 < rows {
+                                execute!(stdout, MoveDown(1))?;
+                            } else {
+                                view.scroll_down(1);
+                            }
+                        }
                     }
                     KeyCode::Char('i') => {
-                        view.scroll_up(1);
+                        if let Ok((_, crow)) = position() {
+                            if crow > 0 {
+                                execute!(stdout, MoveUp(1))?;
+                            } else {
+                                view.scroll_up(1);
+                            }
+                        }
                     }
                     _ => {
                         println!("{:?}", event);
@@ -64,12 +86,16 @@ fn main() -> Result<()> {
                 }
             }
         }
+        queue!(stdout, Hide)?;
+        queue!(stdout, SavePosition)?;
         queue!(stdout, Clear(ClearType::All))?;
         queue!(stdout, MoveTo(0, 0))?;
         for line in view.render_lines() {
-            queue!(stdout, Print(line));
-            queue!(stdout, MoveToNextLine(1));
+            queue!(stdout, Print(line))?;
+            queue!(stdout, MoveToNextLine(1))?;
         }
+        queue!(stdout, RestorePosition)?;
+        queue!(stdout, Show)?;
         stdout.flush()?;
     }
 
