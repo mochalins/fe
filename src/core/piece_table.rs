@@ -1,11 +1,9 @@
-use std::rc::Rc;
-
 #[derive(Debug)]
 pub struct PieceTable {
-    buffers: Vec<Rc<Buffer>>,
+    buffers: Vec<Buffer>,
 
     /// Arena of pieces, first piece is an empty sentinel piece
-    pieces: Vec<Rc<Piece>>,
+    pieces: Vec<Piece>,
     /// Stack of free piece indices
     free_pieces: Vec<usize>,
 
@@ -20,26 +18,25 @@ pub struct PieceTable {
 
 impl PieceTable {
     pub fn new(content: &str) -> Self {
-        let mut buffers = Vec::<Rc<Buffer>>::with_capacity(2);
-        buffers.push(Rc::new(Buffer::new(content)));
-        buffers.push(Rc::new(Buffer::new("")));
-        let sentinel_piece = Rc::new(Piece {
-            buffer: buffers[0].clone(),
-            start: BufferPosition {
-                line_index: 0,
-                char_offset: 0,
-            },
-            end: BufferPosition {
-                line_index: 0,
-                char_offset: 0,
-            },
-        });
+        let mut buffers = Vec::<Buffer>::with_capacity(2);
+        buffers.push(Buffer::new(content));
+        buffers.push(Buffer::new(""));
         return PieceTable {
             buffers: buffers,
-            pieces: vec![sentinel_piece.clone()],
+            pieces: vec![Piece {
+                buffer_index: 0,
+                start: BufferPosition {
+                    line_index: 0,
+                    char_offset: 0,
+                },
+                end: BufferPosition {
+                    line_index: 0,
+                    char_offset: 0,
+                },
+            }],
             free_pieces: Vec::new(),
             nodes: vec![Node {
-                piece: sentinel_piece.clone(),
+                piece_index: 0,
                 rank: 0,
                 left_lines: 0,
                 left_chars: 0,
@@ -52,8 +49,59 @@ impl PieceTable {
         };
     }
 
+    /// Count of lines in piece
+    fn piece_line_count(&self, piece: usize) -> usize {
+        debug_assert!(piece < self.pieces.len());
+        debug_assert!(!self.free_pieces.contains(&piece));
+
+        let piece = &self.pieces[piece];
+        if piece.start.line_index > piece.end.line_index {
+            return 0;
+        } else {
+            return piece.end.line_index - piece.start.line_index + 1;
+        }
+    }
+
+    /// Count of chars in piece
+    fn piece_char_count(&self, piece: usize) -> usize {
+        debug_assert!(piece < self.pieces.len());
+        debug_assert!(!self.free_pieces.contains(&piece));
+
+        let piece = &self.pieces[piece];
+        let buffer = &self.buffers[piece.buffer_index];
+        let start_ind = buffer.position_to_index(piece.start);
+        let end_ind = buffer.position_to_index(piece.end);
+        if start_ind > end_ind {
+            return 0;
+        }
+        else {
+            return end_ind - start_ind + 1;
+        }
+    }
+
+    /// Count of lines in node
+    fn node_line_count(&self, node: usize) -> usize {
+        debug_assert!(node < self.nodes.len());
+        debug_assert!(!self.free_nodes.contains(&node));
+
+        let node = &self.nodes[node];
+        return self.piece_line_count(node.piece_index);
+    }
+
+    /// Count of chars in node
+    fn node_char_count(&self, node: usize) -> usize {
+        debug_assert!(node < self.nodes.len());
+        debug_assert!(!self.free_nodes.contains(&node));
+
+        let node = &self.nodes[node];
+        return self.piece_char_count(node.piece_index);
+    }
+
     /// Search for node by line index
     fn search_node_line(&self, node: usize, line: usize) -> usize {
+        debug_assert!(node < self.nodes.len());
+        debug_assert!(!self.free_nodes.contains(&node));
+
         let mut node_ind: usize = node;
         while node_ind > 0 {
             let node = &self.nodes[node_ind];
@@ -63,7 +111,7 @@ impl PieceTable {
                 node_ind = node.left_index;
             }
             // Found key match
-            else if line < node.left_lines + node.lines() {
+            else if line < node.left_lines + self.node_line_count(node_ind) {
                 break;
             }
             // Traverse right subtree
@@ -76,6 +124,9 @@ impl PieceTable {
 
     /// Search for node by char index
     fn search_node_char(&self, node: usize, char: usize) -> usize {
+        debug_assert!(node < self.nodes.len());
+        debug_assert!(!self.free_nodes.contains(&node));
+
         let mut node_ind: usize = node;
         while node_ind > 0 {
             let node = &self.nodes[node_ind];
@@ -85,7 +136,7 @@ impl PieceTable {
                 node_ind = node.left_index;
             }
             // Found key match
-            else if char < node.left_chars + node.chars() {
+            else if char < node.left_chars + self.node_char_count(node_ind) {
                 break;
             }
             // Traverse right subtree
@@ -160,40 +211,16 @@ struct BufferPosition {
 
 #[derive(PartialEq, Debug)]
 struct Piece {
-    buffer: Rc<Buffer>,
+    buffer_index: usize,
     /// Start position of piece (inclusive)
     start: BufferPosition,
     /// End position of piece (inclusive)
     end: BufferPosition,
 }
 
-impl Piece {
-    /// Count of lines in piece
-    fn lines(&self) -> usize {
-        debug_assert!(self.start.line_index < self.buffer.line_starts.len());
-        debug_assert!(self.end.line_index < self.buffer.line_starts.len());
-        if self.end.line_index < self.start.line_index {
-            return 0;
-        } else {
-            return self.end.line_index - self.start.line_index + 1;
-        }
-    }
-
-    /// Count of chars in piece
-    fn chars(&self) -> usize {
-        let start_index = self.buffer.position_to_index(self.start);
-        let end_index = self.buffer.position_to_index(self.end);
-        if end_index < start_index {
-            return 0;
-        } else {
-            return end_index - start_index + 1;
-        }
-    }
-}
-
 #[derive(Debug)]
 struct Node {
-    piece: Rc<Piece>,
+    piece_index: usize,
     rank: usize,
 
     /// Count of lines in left subtree
@@ -204,16 +231,6 @@ struct Node {
     parent_index: usize,
     left_index: usize,
     right_index: usize,
-}
-
-impl Node {
-    fn lines(&self) -> usize {
-        self.piece.lines()
-    }
-
-    fn chars(&self) -> usize {
-        self.piece.chars()
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -279,8 +296,8 @@ mod tests {
         assert_eq!(ptable.free_nodes.len(), 0);
         assert_eq!(ptable.free_pieces.len(), 0);
         assert_eq!(ptable.buffers.len(), 2);
-        assert_eq!(*ptable.buffers[0], Buffer::new(init_str));
-        assert_eq!(*ptable.buffers[1], Buffer::new(""));
+        assert_eq!(ptable.buffers[0], Buffer::new(init_str));
+        assert_eq!(ptable.buffers[1], Buffer::new(""));
         assert_eq!(ptable.piece_tree, 0)
     }
 }
