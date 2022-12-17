@@ -13,7 +13,7 @@ pub struct PieceTable {
     free_nodes: Vec<usize>,
 
     /// Root node index of piece tree
-    piece_tree: usize,
+    root_index: usize,
 }
 
 impl PieceTable {
@@ -22,16 +22,16 @@ impl PieceTable {
         buffers.push(Buffer::new(content));
         buffers.push(Buffer::new(""));
 
-        let num_lines = buffers[0].line_starts.len();
+        let num_lines = buffers[0].linebreaks.len();
 
         let mut pieces = vec![Piece {
             buffer_index: 0,
             start: BufferPosition {
-                line_index: 0,
+                linebreak_index: 0,
                 char_offset: 0,
             },
             end: BufferPosition {
-                line_index: 0,
+                linebreak_index: 0,
                 char_offset: 0,
             },
         }];
@@ -39,14 +39,14 @@ impl PieceTable {
             pieces.push(Piece {
                 buffer_index: 0,
                 start: BufferPosition {
-                    line_index: 0,
+                    linebreak_index: 0,
                     char_offset: 0,
                 },
                 end: BufferPosition {
-                    line_index: num_lines - 1,
+                    linebreak_index: num_lines - 1,
                     char_offset: buffers[0].value.chars().count()
                         - 1
-                        - buffers[0].line_starts[num_lines - 1],
+                        - buffers[0].linebreaks[num_lines - 1],
                 },
             });
         }
@@ -57,28 +57,33 @@ impl PieceTable {
             nodes: vec![Node {
                 piece_index: 0,
                 rank: 0,
-                left_lines: 0,
+                left_linebreaks: 0,
                 left_chars: 0,
                 parent_index: 0,
                 left_index: 0,
                 right_index: 0,
             }],
             free_nodes: Vec::new(),
-            piece_tree: 0,
+            root_index: 0,
         };
     }
 
-    /// Count of lines in piece
-    fn piece_line_count(&self, piece: usize) -> usize {
+    /// Count of linebreaks in piece
+    fn piece_linebreak_count(&self, piece: usize) -> usize {
         debug_assert!(piece < self.pieces.len());
         debug_assert!(!self.free_pieces.contains(&piece));
 
         let piece = &self.pieces[piece];
-        if piece.start.line_index > piece.end.line_index {
+        if piece.start.linebreak_index > piece.end.linebreak_index {
             return 0;
-        } else {
-            return piece.end.line_index - piece.start.line_index + 1;
         }
+
+        let mut linebreaks = piece.end.linebreak_index - piece.start.linebreak_index;
+        if piece.start.char_offset == 0 {
+            linebreaks += 1;
+        }
+
+        return linebreaks;
     }
 
     /// Count of chars in piece
@@ -97,13 +102,13 @@ impl PieceTable {
         }
     }
 
-    /// Count of lines in node
-    fn node_line_count(&self, node: usize) -> usize {
+    /// Count of linebreaks in node
+    fn node_linebreak_count(&self, node: usize) -> usize {
         debug_assert!(node < self.nodes.len());
         debug_assert!(!self.free_nodes.contains(&node));
 
         let node = &self.nodes[node];
-        return self.piece_line_count(node.piece_index);
+        return self.piece_linebreak_count(node.piece_index);
     }
 
     /// Count of chars in node
@@ -121,19 +126,21 @@ impl PieceTable {
         debug_assert!(!self.free_nodes.contains(&node));
 
         let mut node_ind: usize = node;
+        let mut line = line;
         while node_ind > 0 {
             let node = &self.nodes[node_ind];
 
             // Traverse left subtree
-            if line < node.left_lines {
+            if line < node.left_linebreaks {
                 node_ind = node.left_index;
             }
             // Found key match
-            else if line < node.left_lines + self.node_line_count(node_ind) {
+            else if line < node.left_linebreaks + self.node_linebreak_count(node_ind) {
                 break;
             }
             // Traverse right subtree
             else {
+                line -= node.left_linebreaks + self.node_linebreak_count(node_ind);
                 node_ind = node.right_index;
             }
         }
@@ -141,24 +148,26 @@ impl PieceTable {
     }
 
     /// Search for node by char index
-    fn search_node_char(&self, node: usize, char: usize) -> usize {
+    fn search_node_char(&self, node: usize, char_index: usize) -> usize {
         debug_assert!(node < self.nodes.len());
         debug_assert!(!self.free_nodes.contains(&node));
 
         let mut node_ind: usize = node;
+        let mut char_index = char_index;
         while node_ind > 0 {
             let node = &self.nodes[node_ind];
 
             // Traverse left subtree
-            if char < node.left_chars {
+            if char_index < node.left_chars {
                 node_ind = node.left_index;
             }
             // Found key match
-            else if char < node.left_chars + self.node_char_count(node_ind) {
+            else if char_index < node.left_chars + self.node_char_count(node_ind) {
                 break;
             }
             // Traverse right subtree
             else {
+                char_index -= node.left_chars + self.node_char_count(node_ind);
                 node_ind = node.right_index;
             }
         }
@@ -169,27 +178,20 @@ impl PieceTable {
 #[derive(PartialEq, Debug)]
 struct Buffer {
     value: String,
-    line_starts: Vec<usize>,
+    linebreaks: Vec<usize>,
 }
 
 impl Buffer {
     fn new(value: &str) -> Self {
-        if value.len() == 0 {
-            return Buffer {
-                value: String::new(),
-                line_starts: Vec::new(),
-            };
-        }
-        let value = String::from(value);
-        let mut line_starts: Vec<usize> = vec![0];
-        for (ind, _) in value.match_indices("\n") {
-            if ind < value.chars().count() - 1 {
-                line_starts.push(ind + 1);
-            }
+        // "Pseudo-linebreak" at buffer index 0 for simpler line operations
+        let mut linebreaks: Vec<usize> = vec![0];
+        // '\r' can be safely ignored as lines will be trimmed in use
+        for (ind, _) in value.match_indices('\n') {
+            linebreaks.push(ind);
         }
         return Buffer {
-            value: value,
-            line_starts: line_starts,
+            value: String::from(value),
+            linebreaks: linebreaks,
         };
     }
 
@@ -198,22 +200,18 @@ impl Buffer {
             return;
         }
         let current_len = self.value.chars().count();
-        if current_len == 0 || self.value.chars().last() == Some('\n') {
-            self.line_starts.push(current_len);
-        }
         let value = String::from(value);
-        for (ind, _) in value.match_indices("\n") {
-            if ind < current_len - 1 {
-                self.line_starts.push(current_len + ind + 1);
-            }
+        // '\r' can be safely ignored as lines will be trimmed in use
+        for (ind, _) in value.match_indices('\n') {
+            self.linebreaks.push(current_len + ind);
         }
         self.value.push_str(&value);
     }
 
     /// Convert position to char index in buffer value
     fn position_to_index(&self, position: BufferPosition) -> usize {
-        debug_assert!(position.line_index < self.line_starts.len());
-        let result = self.line_starts[position.line_index] + position.char_offset;
+        debug_assert!(position.linebreak_index < self.linebreaks.len());
+        let result = self.linebreaks[position.linebreak_index] + position.char_offset;
         debug_assert!(result < self.value.chars().count());
         return result;
     }
@@ -221,8 +219,8 @@ impl Buffer {
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 struct BufferPosition {
-    /// Index in buffer's line_starts vector
-    line_index: usize,
+    /// Index in buffer's linebreaks vector
+    linebreak_index: usize,
     /// Count of chars offset from above referenced line start
     char_offset: usize,
 }
@@ -241,8 +239,8 @@ struct Node {
     piece_index: usize,
     rank: usize,
 
-    /// Count of lines in left subtree
-    left_lines: usize,
+    /// Count of linebreaks in left subtree
+    left_linebreaks: usize,
     /// Count of chars in left subtree
     left_chars: usize,
 
@@ -273,14 +271,15 @@ mod tests {
         let init_str = "sample content\ntest line\r\n3\n";
         let b = Buffer::new(init_str);
         assert_eq!(b.value, String::from(init_str));
-        assert_eq!(b.line_starts.len(), 3);
-        assert_eq!(b.line_starts[0], 0);
-        assert_eq!(b.line_starts[1], 15);
-        assert_eq!(b.line_starts[2], 26);
+        assert_eq!(b.linebreaks.len(), 4);
+        assert_eq!(b.linebreaks[0], 0);
+        assert_eq!(b.linebreaks[1], 14);
+        assert_eq!(b.linebreaks[2], 25);
+        assert_eq!(b.linebreaks[3], 27);
 
         let b = Buffer::new("");
         assert_eq!(b.value, String::from(""));
-        assert_eq!(b.line_starts.len(), 0);
+        assert_eq!(b.linebreaks.len(), 1);
     }
 
     #[test]
@@ -293,16 +292,15 @@ mod tests {
         let mut buf_val = String::from(init_str);
         buf_val.push_str(append_str);
         assert_eq!(b.value, buf_val);
-        assert_eq!(b.line_starts.len(), 5);
-        assert_eq!(b.line_starts[3], 28);
-        assert_eq!(b.line_starts[4], 42);
+        assert_eq!(b.linebreaks.len(), 5);
+        assert_eq!(b.linebreaks[4], 41);
 
         let append_str_two = " five";
         b.append(append_str_two);
         buf_val.push_str(append_str_two);
         assert_eq!(b.value, buf_val);
-        assert_eq!(b.line_starts.len(), 5);
-        assert_eq!(b.line_starts[4], 42);
+        assert_eq!(b.linebreaks.len(), 5);
+        assert_eq!(b.linebreaks[4], 41);
     }
 
     #[test]
@@ -316,6 +314,6 @@ mod tests {
         assert_eq!(ptable.buffers.len(), 2);
         assert_eq!(ptable.buffers[0], Buffer::new(init_str));
         assert_eq!(ptable.buffers[1], Buffer::new(""));
-        assert_eq!(ptable.piece_tree, 0)
+        assert_eq!(ptable.root_index, 0)
     }
 }
