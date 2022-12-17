@@ -21,19 +21,38 @@ impl PieceTable {
         let mut buffers = Vec::<Buffer>::with_capacity(2);
         buffers.push(Buffer::new(content));
         buffers.push(Buffer::new(""));
-        return PieceTable {
-            buffers: buffers,
-            pieces: vec![Piece {
+
+        let num_lines = buffers[0].line_starts.len();
+
+        let mut pieces = vec![Piece {
+            buffer_index: 0,
+            start: BufferPosition {
+                line_index: 0,
+                char_offset: 0,
+            },
+            end: BufferPosition {
+                line_index: 0,
+                char_offset: 0,
+            },
+        }];
+        if num_lines > 0 {
+            pieces.push(Piece {
                 buffer_index: 0,
                 start: BufferPosition {
                     line_index: 0,
                     char_offset: 0,
                 },
                 end: BufferPosition {
-                    line_index: 0,
-                    char_offset: 0,
+                    line_index: num_lines - 1,
+                    char_offset: buffers[0].value.chars().count()
+                        - 1
+                        - buffers[0].line_starts[num_lines - 1],
                 },
-            }],
+            });
+        }
+        return PieceTable {
+            buffers: buffers,
+            pieces: pieces,
             free_pieces: Vec::new(),
             nodes: vec![Node {
                 piece_index: 0,
@@ -73,8 +92,7 @@ impl PieceTable {
         let end_ind = buffer.position_to_index(piece.end);
         if start_ind > end_ind {
             return 0;
-        }
-        else {
+        } else {
             return end_ind - start_ind + 1;
         }
     }
@@ -292,7 +310,7 @@ mod tests {
         let init_str = "sample content\ntest line\r\n3\n";
         let ptable = PieceTable::new(init_str);
         assert_eq!(ptable.nodes.len(), 1);
-        assert_eq!(ptable.pieces.len(), 1);
+        assert_eq!(ptable.pieces.len(), 2);
         assert_eq!(ptable.free_nodes.len(), 0);
         assert_eq!(ptable.free_pieces.len(), 0);
         assert_eq!(ptable.buffers.len(), 2);
