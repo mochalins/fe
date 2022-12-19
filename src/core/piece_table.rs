@@ -16,6 +16,7 @@ pub struct PieceTable {
     root_index: usize,
 }
 
+/// Piece table functions
 impl PieceTable {
     pub fn new(content: &str) -> Self {
         let mut buffers = Vec::<Buffer>::with_capacity(2);
@@ -67,7 +68,10 @@ impl PieceTable {
             root_index: 0,
         };
     }
+}
 
+/// Piece functions
+impl PieceTable {
     /// Count of linebreaks in piece
     fn piece_linebreak_count(&self, piece: usize) -> usize {
         debug_assert!(piece < self.pieces.len());
@@ -101,7 +105,10 @@ impl PieceTable {
             return end_ind - start_ind + 1;
         }
     }
+}
 
+/// Node functions
+impl PieceTable {
     /// Count of linebreaks in node
     fn node_linebreak_count(&self, node: usize) -> usize {
         debug_assert!(node < self.nodes.len());
@@ -119,7 +126,10 @@ impl PieceTable {
         let node = &self.nodes[node];
         return self.piece_char_count(node.piece_index);
     }
+}
 
+/// Piece tree functions
+impl PieceTable {
     /// Search for node by line index
     fn search_node_line(&self, node: usize, line: usize) -> usize {
         debug_assert!(node < self.nodes.len());
