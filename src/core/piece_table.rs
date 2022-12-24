@@ -55,75 +55,43 @@ impl PieceTable {
         return result;
     }
 
-    fn get_piece_buffer(&self, piece: &Piece) -> &Buffer {
-        return if piece.append {
-            &self.append_buffer
-        } else {
-            &self.original_buffer
-        };
+    fn get_piece(&self, index: usize) -> &Piece {
+        return self.pieces.get(index);
     }
 
-    fn get_piece_buffer_mut(&mut self, piece: &Piece) -> &mut Buffer {
-        return if piece.append {
-            &mut self.append_buffer
-        } else {
-            &mut self.original_buffer
-        };
-    }
-}
-
-/// Piece functions
-impl PieceTable {
-    /// Count of linebreaks in piece
-    fn piece_linebreaks_count(&self, piece: usize) -> usize {
-        let piece = self.pieces.get(piece);
-        let buffer = self.get_piece_buffer(piece);
-        return buffer.position_range_lines_count(piece.start, piece.end);
-    }
-
-    /// Count of chars in piece
-    fn piece_char_count(&self, piece: usize) -> usize {
-        let piece = self.pieces.get(piece);
-        let buffer = self.get_piece_buffer(piece);
-        return buffer.position_range_chars_count(piece.start, piece.end);
-    }
-}
-
-/// Node functions
-impl PieceTable {
-    /// Count of linebreaks in node
-    fn node_linebreaks_count(&self, node: usize) -> usize {
-        let node = self.nodes.get(node);
-        return self.piece_linebreaks_count(node.piece_index);
-    }
-
-    /// Count of chars in node
-    fn node_char_count(&self, node: usize) -> usize {
-        let node = self.nodes.get(node);
-        return self.piece_char_count(node.piece_index);
+    fn get_piece_mut(&mut self, index: usize) -> &mut Piece {
+        return self.pieces.get_mut(index);
     }
 }
 
 /// Piece tree functions
 impl PieceTable {
+    fn get_node(&self, index: usize) -> &Node {
+        return self.nodes.get(index);
+    }
+
+    fn get_node_mut(&mut self, index: usize) -> &mut Node {
+        return self.nodes.get_mut(index);
+    }
+
     /// Search for node by line index
     fn search_node_line(&self, node: usize, line: usize) -> usize {
         let mut node_ind: usize = node;
         let mut line = line;
         while node_ind > 0 {
-            let node = self.nodes.get(node_ind);
+            let node = self.get_node(node_ind);
 
             // Traverse left subtree
             if line < node.left_linebreaks {
                 node_ind = node.left_index;
             }
             // Found key match
-            else if line < node.left_linebreaks + self.node_linebreaks_count(node_ind) {
+            else if line < node.left_linebreaks + node.linebreaks_count(self) {
                 break;
             }
             // Traverse right subtree
             else {
-                line -= node.left_linebreaks + self.node_linebreaks_count(node_ind);
+                line -= node.left_linebreaks + node.linebreaks_count(self);
                 node_ind = node.right_index;
             }
         }
@@ -135,19 +103,19 @@ impl PieceTable {
         let mut node_ind: usize = node;
         let mut char_index = char_index;
         while node_ind > 0 {
-            let node = self.nodes.get(node_ind);
+            let node = self.get_node(node_ind);
 
             // Traverse left subtree
             if char_index < node.left_chars {
                 node_ind = node.left_index;
             }
             // Found key match
-            else if char_index < node.left_chars + self.node_char_count(node_ind) {
+            else if char_index < node.left_chars + node.chars_count(self) {
                 break;
             }
             // Traverse right subtree
             else {
-                char_index -= node.left_chars + self.node_char_count(node_ind);
+                char_index -= node.left_chars + node.chars_count(self);
                 node_ind = node.right_index;
             }
         }
@@ -170,6 +138,20 @@ struct Node {
     right_index: usize,
 }
 
+impl Node {
+    /// Count of linebreaks in node
+    fn linebreaks_count(&self, table: &PieceTable) -> usize {
+        let piece = table.get_piece(self.piece_index);
+        return piece.linebreaks_count(table);
+    }
+
+    /// Count of chars in node
+    fn chars_count(&self, table: &PieceTable) -> usize {
+        let piece = table.get_piece(self.piece_index);
+        return piece.chars_count(table);
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 struct NodePosition {
     node_index: usize,
@@ -190,6 +172,36 @@ struct Piece {
     /// End position of piece (inclusive)
     end: BufferPosition,
     append: bool,
+}
+
+impl Piece {
+    /// Count of linebreaks in piece
+    fn linebreaks_count(&self, table: &PieceTable) -> usize {
+        let buffer = self.get_buffer(table);
+        return buffer.position_range_lines_count(self.start, self.end);
+    }
+
+    /// Count of chars in piece
+    fn chars_count(&self, table: &PieceTable) -> usize {
+        let buffer = self.get_buffer(table);
+        return buffer.position_range_chars_count(self.start, self.end);
+    }
+
+    fn get_buffer<'a>(&'a self, table: &'a PieceTable) -> &Buffer {
+        return if self.append {
+            &table.append_buffer
+        } else {
+            &table.original_buffer
+        };
+    }
+
+    fn get_buffer_mut<'a>(&'a mut self, table: &'a mut PieceTable) -> &mut Buffer {
+        return if self.append {
+            &mut table.append_buffer
+        } else {
+            &mut table.original_buffer
+        };
+    }
 }
 
 #[cfg(test)]
