@@ -75,8 +75,8 @@ impl PieceTable {
     }
 
     /// Search for node by line index
-    fn search_node_line(&self, node: usize, line: usize) -> usize {
-        let mut node_ind: usize = node;
+    fn search_node_line(&self, root: usize, line: usize) -> usize {
+        let mut node_ind: usize = root;
         let mut line = line;
         while node_ind > 0 {
             let node = self.get_node(node_ind);
@@ -99,8 +99,8 @@ impl PieceTable {
     }
 
     /// Search for node by char index
-    fn search_node_char(&self, node: usize, char_index: usize) -> usize {
-        let mut node_ind: usize = node;
+    fn search_node_char(&self, root: usize, char_index: usize) -> usize {
+        let mut node_ind: usize = root;
         let mut char_index = char_index;
         while node_ind > 0 {
             let node = self.get_node(node_ind);
@@ -120,6 +120,19 @@ impl PieceTable {
             }
         }
         return node_ind;
+    }
+
+    /// Insert piece into tree, returns index to new created node
+    fn insert_node(&mut self, root: usize, char_index: usize, piece: usize) -> usize {
+        return 0;
+    }
+
+    /// Delete node in tree and return deleted node index
+    fn delete_node(&mut self, root: usize, char_index: usize) -> usize {
+        return 0;
+    }
+
+    fn rebalance_nodes(&mut self, root: usize) {
     }
 }
 
