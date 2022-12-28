@@ -42,15 +42,7 @@ impl PieceTable {
             });
         }
 
-        result.nodes.alloc(Node {
-            piece_index: 0,
-            rank: 0,
-            left_linebreaks: 0,
-            left_chars: 0,
-            parent_index: 0,
-            left_index: 0,
-            right_index: 0,
-        });
+        result.nodes.alloc(Node::new(0, false));
 
         return result;
     }
@@ -124,6 +116,60 @@ impl PieceTable {
 
     /// Insert piece into tree, returns index to new created node
     fn insert_node(&mut self, root: usize, char_index: usize, piece: usize) -> usize {
+        // Create new node in nodes
+        let new_node_index: usize = self.nodes.alloc(Node::new(piece, false));
+        let new_node: &mut Node = self.get_node_mut(new_node_index);
+
+        if root == 0 {
+            self.root_index = new_node_index;
+            return new_node_index;
+        }
+
+        let new_chars: usize = self.get_piece(piece).chars_count(self);
+        let new_linebreaks: usize = self.get_piece(piece).linebreaks_count(self);
+
+        // Insert node
+        let mut node_index: usize = root;
+        let mut char_index = char_index;
+        else loop {
+            let node: &mut Node = self.get_node_mut(node_index);
+
+            // Traverse left subtree, prepending match
+            if char_index <= node.left_chars {
+                node.left_chars += new_chars;
+                node.left_linebreaks += new_linebreaks;
+
+                // Insert as left child
+                if node.left_index == 0 {
+                    node.left_index = new_node_index;
+                    new_node.parent = node_index;
+                    break;
+                }
+                // Continue search
+                else {
+                    node_index = node.left_index;
+                }
+            }
+            // Traverse right subtree
+            else {
+                // Insert as right child
+                if node.right_index == 0 {
+                    node.right_index = new_node_index;
+                    new_node.parent = node_index;
+                    break;
+                }
+                else {
+                    char_index -= node.left_chars + node.chars_count(self);
+                    node_index = node.right_index;
+                }
+            }
+        }
+
+        // Rebalance tree until root
+        node_index = new_node_index;
+        loop {
+            let node: &mut Node = self.get_node_mut(node_index);
+        }
         return 0;
     }
 
@@ -139,7 +185,9 @@ impl PieceTable {
 #[derive(Debug)]
 struct Node {
     piece_index: usize,
-    rank: usize,
+
+    /// If true rank(parent) - rank(self) is 2. If false rank difference is 1.
+    rank_difference: bool,
 
     /// Count of linebreaks in left subtree
     left_linebreaks: usize,
@@ -152,6 +200,18 @@ struct Node {
 }
 
 impl Node {
+    fn new(piece_index: usize, rank_difference: bool) -> Self {
+        return Node {
+            piece_index,
+            rank_difference,
+            left_linebreaks: 0,
+            left_chars: 0,
+            parent_index: 0,
+            left_index: 0,
+            right_index: 0,
+        };
+    }
+
     /// Count of linebreaks in node
     fn linebreaks_count(&self, table: &PieceTable) -> usize {
         let piece = table.get_piece(self.piece_index);
