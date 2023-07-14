@@ -6,13 +6,12 @@
 # Whitelist
 !*.md
 !LICENSE
-!Cargo.toml
-!Cargo.lock
 !.gitignore
 !.github/**/*.yml
 
-!*.rs
+!*.zig
 
 
 # Blacklist (overrides Whitelist)
-/target
+/zig-cache
+/zig-out
