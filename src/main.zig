@@ -537,7 +537,7 @@ const Editor = struct {
         try ab.appendSlice(try std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ self.cy + 1, cx }));
         try ab.appendSlice("\x1b[?25h");
 
-        _ = try os.write(os.linux.STDOUT_FILENO, ab.items);
+        _ = try os.write(os.STDOUT_FILENO, ab.items);
     }
 
     fn moveCursor(self: *Self, c: u8) void {

@@ -1,5 +1,8 @@
 const std = @import("std");
 
+const os = std.os;
+const system = os.system;
+
 const Key = @import("key.zig").Key;
 
 pub const Screen = struct {
@@ -9,46 +12,41 @@ pub const Screen = struct {
     cols: u16 = 0,
 
     raw_mode: bool = false,
-    orig_termios: std.os.termios = undefined,
+    orig_termios: os.termios = undefined,
 
     pub fn enableRawMode(self: *Self) !void {
         if (self.raw_mode) return;
 
-        self.orig_termios = try std.os.tcgetattr(std.os.STDIN_FILENO); // So we can restore later
+        self.orig_termios = try os.tcgetattr(os.STDIN_FILENO); // So we can restore later
         var termios = self.orig_termios;
 
-        const linux = std.os.linux;
-        const VMIN = 5;
-        const VTIME = 6;
-
         // input modes: no break, no CR to NL, no parity check, no strip char, no start/stop output ctrl.
-        termios.iflag &= ~(linux.BRKINT | linux.ICRNL | linux.INPCK | linux.ISTRIP | linux.IXON);
+        termios.iflag &= ~(system.BRKINT | system.ICRNL | system.INPCK | system.ISTRIP | system.IXON);
         // output modes: disable post processing
-        termios.oflag &= ~(linux.OPOST);
+        termios.oflag &= ~(system.OPOST);
         // control modes: set 8 bit chars
-        termios.cflag |= linux.CS8;
+        termios.cflag |= system.CS8;
         // local modes: choign off, canonical off, no extended functions, no signal chars (^Z, ^C)
-        termios.lflag &= ~(linux.ECHO | linux.ICANON | linux.IEXTEN | linux.ISIG);
-        termios.cc[VMIN] = 0;
-        termios.cc[VTIME] = 1;
+        termios.lflag &= ~(system.ECHO | system.ICANON | system.IEXTEN | system.ISIG);
+        termios.cc[system.V.MIN] = 1;
+        termios.cc[system.V.TIME] = 0;
 
-        _ = linux.tcsetattr(linux.STDIN_FILENO, .FLUSH, &termios);
+        try os.tcsetattr(os.STDIN_FILENO, .FLUSH, termios);
         self.raw_mode = true;
     }
 
     pub fn disableRawMode(self: *Self) !void {
         if (self.raw_mode) {
-            _ = std.os.linux.tcsetattr(std.os.linux.STDIN_FILENO, .FLUSH, &self.orig_termios);
+            try os.tcsetattr(os.STDIN_FILENO, .FLUSH, self.orig_termios);
             self.raw_mode = false;
         }
     }
 
     fn getRawSize(self: *Self) !void {
-        const linux = std.os.linux;
-        var raw_size: linux.winsize = undefined;
-        const fd = @as(usize, @bitCast(@as(isize, linux.STDOUT_FILENO)));
-        if (linux.syscall3(.ioctl, fd, linux.T.IOCGWINSZ, @intFromPtr(&raw_size)) == -1 or raw_size.ws_col == 0) {
-            _ = try std.os.write(linux.STDOUT_FILENO, "\x1b[999C\x1b[999B");
+        var raw_size: system.winsize = undefined;
+        const err = system.ioctl(os.STDOUT_FILENO, system.T.IOCGWINSZ, @intFromPtr(&raw_size));
+        if (os.errno(err) != .SUCCESS) {
+            _ = try os.write(os.STDOUT_FILENO, "\x1b[999C\x1b[999B");
             return self.getCursorPosition();
         } else {
             self.rows = raw_size.ws_row;
@@ -64,10 +62,10 @@ pub const Screen = struct {
     pub fn getCursorPosition(_: *Self) !void {
         var buf: [32]u8 = undefined;
 
-        _ = try std.os.write(std.os.linux.STDOUT_FILENO, "\x1b[6n");
+        _ = try os.write(os.STDOUT_FILENO, "\x1b[6n");
 
         for (0..buf.len - 1) |i| {
-            _ = std.os.read(std.os.linux.STDIN_FILENO, &buf) catch break;
+            _ = os.read(os.STDIN_FILENO, &buf) catch break;
             if (buf[i] == 'R') break;
         }
 
