@@ -1,4 +1,5 @@
 const std = @import("std");
+const os = std.os;
 
 pub const Key = enum(u8) {
     ctrl_c = 3,
@@ -26,21 +27,19 @@ pub const Key = enum(u8) {
     /// Read a key from the terminal put in raw mode, trying to handle
     /// escape sequences.
     pub fn readKey() !u8 {
-        const linux = std.os.linux;
-
         var c: [1]u8 = [1]u8{0};
         var seq: [3]u8 = undefined;
-        _ = try std.os.read(linux.STDIN_FILENO, &c);
+        _ = try os.read(os.STDIN_FILENO, &c);
 
         switch (c[0]) {
             @intFromEnum(Key.esc) => {
-                _ = try std.os.read(linux.STDIN_FILENO, seq[0..1]);
-                _ = try std.os.read(linux.STDIN_FILENO, seq[1..2]);
+                _ = try os.read(os.STDIN_FILENO, seq[0..1]);
+                _ = try os.read(os.STDIN_FILENO, seq[1..2]);
 
                 if (seq[0] == '[') {
                     switch (seq[1]) {
                         '0'...'9' => {
-                            _ = try std.os.read(linux.STDIN_FILENO, seq[2..3]);
+                            _ = try os.read(os.STDIN_FILENO, seq[2..3]);
                             if (seq[2] == '~') {
                                 switch (seq[1]) {
                                     '1' => return @intFromEnum(Key.home),

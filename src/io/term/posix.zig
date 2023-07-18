@@ -3,9 +3,9 @@ const std = @import("std");
 const os = std.os;
 const system = os.system;
 
-const Key = @import("key.zig").Key;
+const Key = @import("../key.zig").Key;
 
-pub const Screen = struct {
+pub const Term = struct {
     const Self = @This();
 
     rows: u16 = 0,
@@ -14,11 +14,12 @@ pub const Screen = struct {
     raw_mode: bool = false,
     orig_termios: os.termios = undefined,
 
-    pub fn enableRawMode(self: *Self) !void {
-        if (self.raw_mode) return;
-
-        self.orig_termios = try os.tcgetattr(os.STDIN_FILENO); // So we can restore later
-        var termios = self.orig_termios;
+    pub fn init() !Term {
+        const result = Term{
+            .orig_termios = try os.tcgetattr(os.STDIN_FILENO),
+        };
+        errdefer result.deinit() catch {};
+        var termios = result.orig_termios;
 
         // input modes: no break, no CR to NL, no parity check, no strip char, no start/stop output ctrl.
         termios.iflag &= ~(system.BRKINT | system.ICRNL | system.INPCK | system.ISTRIP | system.IXON);
@@ -32,14 +33,11 @@ pub const Screen = struct {
         termios.cc[system.V.TIME] = 0;
 
         try os.tcsetattr(os.STDIN_FILENO, .FLUSH, termios);
-        self.raw_mode = true;
+        return result;
     }
 
-    pub fn disableRawMode(self: *Self) !void {
-        if (self.raw_mode) {
-            try os.tcsetattr(os.STDIN_FILENO, .FLUSH, self.orig_termios);
-            self.raw_mode = false;
-        }
+    pub fn deinit(self: *const Self) !void {
+        try os.tcsetattr(os.STDIN_FILENO, .FLUSH, self.orig_termios);
     }
 
     fn getRawSize(self: *Self) !void {

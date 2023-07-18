@@ -6,8 +6,8 @@ const io = std.io;
 const mem = std.mem;
 const ascii = std.ascii;
 
-const Screen = @import("screen.zig").Screen;
-const Key = @import("key.zig").Key;
+const Term = @import("io/term.zig").Term;
+const Key = @import("io/key.zig").Key;
 
 const ArrayList = std.ArrayList;
 
@@ -62,7 +62,7 @@ const Editor = struct {
     dirty: bool = false,
     quit_times: u3 = FE_QUIT_TIMES,
     syntax: ?Syntax = Syntax.zig,
-    screen: Screen = Screen{},
+    term: Term = undefined,
     cx: usize = 0,
     cy: usize = 0,
     row_offset: usize = 0,
@@ -73,6 +73,7 @@ const Editor = struct {
         return Self{
             .allocator = allocator,
             .file_path = undefined,
+            .term = try Term.init(),
             .rows = ArrayList(Row).init(allocator),
             .status_message = try ArrayList(u8).initCapacity(allocator, 80),
         };
@@ -193,8 +194,8 @@ const Editor = struct {
             if (self.cy == 0) self.row_offset -= 1 else self.cy -= 1;
             self.cx = file_col;
 
-            if (self.cx >= self.screen.cols) {
-                var shift: usize = self.screen.cols - self.cx + 1;
+            if (self.cx >= self.term.cols) {
+                var shift: usize = self.term.cols - self.cx + 1;
                 self.cx -= shift;
                 self.col_offset += shift;
             }
@@ -266,7 +267,7 @@ const Editor = struct {
     }
 
     fn fixCursor(self: *Self) void {
-        if (self.cy == self.screen.rows - 1) self.row_offset += 1 else self.cy += 1;
+        if (self.cy == self.term.rows - 1) self.row_offset += 1 else self.cy += 1;
 
         self.cx = 0;
         self.col_offset = 0;
@@ -367,7 +368,7 @@ const Editor = struct {
                     self.quit_times -= 1;
                     return;
                 }
-                self.screen.disableRawMode() catch unreachable;
+                self.term.deinit() catch unreachable;
                 os.exit(0);
             },
             .ctrl_s => {
@@ -388,13 +389,13 @@ const Editor = struct {
             .page_up, .page_down => |pg| {
                 if (pg == .page_up and self.cy != 0) {
                     self.cy = 0;
-                } else if (pg == .page_down and self.cy != self.screen.rows - 1) {
-                    self.cy = self.screen.rows - 1;
+                } else if (pg == .page_down and self.cy != self.term.rows - 1) {
+                    self.cy = self.term.rows - 1;
                 }
 
                 var direction: Key =
                     if (pg == Key.page_up) .arrow_up else .arrow_down;
-                for (0..self.screen.rows - 1) |_| {
+                for (0..self.term.rows - 1) |_| {
                     self.moveCursor(@intFromEnum(direction));
                 }
             },
@@ -415,11 +416,11 @@ const Editor = struct {
 
         try self.rowInsertChar(&self.rows.items[file_row], file_col, c);
 
-        if (self.cx == self.screen.cols - 1) self.col_offset += 1 else self.cx += 1;
+        if (self.cx == self.term.cols - 1) self.col_offset += 1 else self.cx += 1;
     }
 
     fn deinit(self: *Self) void {
-        self.screen.disableRawMode() catch unreachable;
+        self.term.deinit() catch unreachable;
         for (self.rows.items) |row| {
             self.allocator.free(row.src);
             self.allocator.free(row.render);
@@ -437,15 +438,15 @@ const Editor = struct {
         try ab.appendSlice("\x1b[H");
 
         // Draw rows
-        for (0..self.screen.rows) |y| {
+        for (0..self.term.rows) |y| {
             var file_row = self.row_offset + y;
 
             if (file_row >= self.rows.items.len) {
-                if (self.rows.items.len == 0 and y == self.screen.rows / 3) {
+                if (self.rows.items.len == 0 and y == self.term.rows / 3) {
                     var buf: [32]u8 = undefined;
 
                     var welcome = try std.fmt.bufPrint(&buf, "fe editor -- version {s}\x1b[0K\r\n", .{FE_VERSION});
-                    var padding: usize = if (welcome.len > self.screen.cols) 0 else (self.screen.cols - welcome.len) / 2;
+                    var padding: usize = if (welcome.len > self.term.cols) 0 else (self.term.cols - welcome.len) / 2;
                     for (0..padding) |_| try ab.appendSlice(" ");
                     try ab.appendSlice(welcome);
                 } else {
@@ -457,7 +458,7 @@ const Editor = struct {
                 var current_color: u8 = 0;
 
                 if (len > 0) {
-                    if (len > self.screen.cols) len = self.screen.cols;
+                    if (len > self.term.cols) len = self.term.cols;
 
                     var start = self.col_offset;
                     for (0..len) |j| {
@@ -501,15 +502,15 @@ const Editor = struct {
             self.rows.items.len,
             modified,
         });
-        var len = if (status.len > self.screen.cols) self.screen.cols else status.len;
+        var len = if (status.len > self.term.cols) self.term.cols else status.len;
         _ = try std.fmt.bufPrint(&rstatus, "{d}/{d}", .{
             self.row_offset + self.cy + 1,
             self.rows.items.len,
         });
         try ab.appendSlice(status[0..status.len]);
 
-        for (len..self.screen.cols) |_| {
-            if (self.screen.cols - len == rstatus.len) {
+        for (len..self.term.cols) |_| {
+            if (self.term.cols - len == rstatus.len) {
                 try ab.appendSlice(&rstatus);
                 break;
             } else {
@@ -553,9 +554,9 @@ const Editor = struct {
                         if (file_row > 0) {
                             self.cy -= 1;
                             self.cx = self.rows.items[file_row - 1].src.len;
-                            if (self.cx > self.screen.cols - 1) {
-                                self.col_offset = self.cx - self.screen.cols + 1;
-                                self.cx = self.screen.cols - 1;
+                            if (self.cx > self.term.cols - 1) {
+                                self.col_offset = self.cx - self.term.cols + 1;
+                                self.cx = self.term.cols - 1;
                             }
                         }
                     }
@@ -568,12 +569,12 @@ const Editor = struct {
                     var row = self.rows.items[file_row];
 
                     if (file_col < row.src.len) {
-                        if (self.cx == self.screen.cols - 1) self.col_offset += 1 else self.cx += 1;
+                        if (self.cx == self.term.cols - 1) self.col_offset += 1 else self.cx += 1;
                     } else if (file_col == row.src.len) {
                         self.cx = 0;
                         self.col_offset = 0;
 
-                        if (self.cy == self.screen.rows - 1) self.row_offset += 1 else self.cy += 1;
+                        if (self.cy == self.term.rows - 1) self.row_offset += 1 else self.cy += 1;
                     }
                 }
             },
@@ -586,7 +587,7 @@ const Editor = struct {
             },
             .arrow_down => {
                 if (file_row < self.rows.items.len) {
-                    if (self.cy == self.screen.rows - 1) self.row_offset += 1 else self.cy += 1;
+                    if (self.cy == self.term.rows - 1) self.row_offset += 1 else self.cy += 1;
                 }
             },
             else => unreachable,
@@ -625,10 +626,9 @@ pub fn main() !void {
 
     var editor = try Editor.init(allocator);
     defer editor.deinit();
-    try editor.screen.updateSize();
+    try editor.term.updateSize();
     try editor.open(file_path);
 
-    try editor.screen.enableRawMode();
     try editor.setStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit", .{});
     while (true) {
         try editor.refreshScreen();
