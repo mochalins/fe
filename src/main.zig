@@ -72,6 +72,7 @@ const Editor = struct {
     status_message: ArrayList(u8),
 
     fn init(allocator: mem.Allocator) !Self {
+        defer _ = os.write(os.STDOUT_FILENO, "\x1b[?1049h") catch {};
         return Self{
             .allocator = allocator,
             .file_path = undefined,
@@ -249,7 +250,11 @@ const Editor = struct {
     fn insertRow(self: *Self, at: usize, buf: []const u8) !void {
         if (at < 0 or at > self.rows.items.len) return;
 
-        var row = Row{ .src = try self.allocator.dupe(u8, buf), .render = try self.allocator.alloc(u8, buf.len), .hl = try self.allocator.alloc(Highlight, buf.len) };
+        var row = Row{
+            .src = try self.allocator.dupe(u8, buf),
+            .render = try self.allocator.alloc(u8, buf.len),
+            .hl = try self.allocator.alloc(Highlight, buf.len),
+        };
 
         @memset(row.hl, Highlight.normal);
 
@@ -370,6 +375,7 @@ const Editor = struct {
                     self.quit_times -= 1;
                     return;
                 }
+                _ = os.write(os.STDOUT_FILENO, "\x1b[?1049l") catch {};
                 self.term.deinit() catch unreachable;
                 os.exit(0);
             },
@@ -422,6 +428,7 @@ const Editor = struct {
     }
 
     fn deinit(self: *Self) void {
+        _ = os.write(os.STDOUT_FILENO, "\x1b[?1049l") catch {};
         self.term.deinit() catch unreachable;
         for (self.rows.items) |row| {
             self.allocator.free(row.src);
