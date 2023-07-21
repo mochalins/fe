@@ -1,13 +1,15 @@
+pub const core = @import("core.zig");
+pub const io = @import("io.zig");
+
 const std = @import("std");
 
 const fs = std.fs;
 const os = std.os;
-const io = std.io;
 const mem = std.mem;
 const ascii = std.ascii;
 
-const Term = @import("io/term.zig").Term;
-const Key = @import("io/key.zig").Key;
+const Key = io.key.Key;
+const Term = io.term.Term;
 
 const ArrayList = std.ArrayList;
 
@@ -628,6 +630,8 @@ pub fn main() !void {
     defer editor.deinit();
     try editor.term.updateSize();
     try editor.open(file_path);
+    var fb = try io.fs.open(allocator, file_path);
+    defer fb.deinit();
 
     try editor.setStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit", .{});
     while (true) {
