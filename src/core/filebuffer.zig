@@ -1,33 +1,159 @@
 const std = @import("std");
 
+const testing = std.testing;
+const expect = testing.expect;
+const expectEqual = testing.expectEqual;
+const expectEqualSlices = testing.expectEqualSlices;
+const expectEqualStrings = testing.expectEqualStrings;
+
 const ArrayList = std.ArrayList;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 
+test {
+    testing.refAllDeclsRecursive(@This());
+}
+
 const Piece = struct {
     const Self = @This();
 
-    /// Index into array of caches
+    /// Index into array of caches.
     cache: usize,
 
-    /// Index of piece's first byte in cache
+    /// Index of piece's first byte in cache.
     byte_start: usize,
 
-    /// Length of piece in bytes
+    /// Length of piece in bytes. Assumed above 0.
     byte_len: usize,
 
-    /// Index of piece's first newline in cache
-    newline_start: usize,
+    /// Index of piece's first newline in cache; if `newline_count` is 0, then
+    /// this value should not be used.
+    newline_start: usize = 0,
 
-    /// Number of newlines in piece
-    newline_num: usize,
+    /// Number of newlines in piece.
+    newline_count: usize,
+
+    /// Return index of end to byte range (exclusive).
+    fn getByteEnd(self: *const Self) usize {
+        return self.byte_start + self.byte_len;
+    }
+
+    test getByteEnd {
+        const test_piece = Piece{
+            .cache = 0,
+            .byte_start = 0,
+            .byte_len = 1,
+            .newline_start = 0,
+            .newline_count = 0,
+        };
+        try expectEqual(@as(usize, 1), test_piece.getByteEnd());
+
+        const test_piece_more = Piece{
+            .cache = 1,
+            .byte_start = 15,
+            .byte_len = 21,
+            .newline_start = 13,
+            .newline_count = 53,
+        };
+        try expectEqual(@as(usize, 36), test_piece_more.getByteEnd());
+    }
+
+    fn hasNewlines(self: *const Self) bool {
+        return self.newline_count > 0;
+    }
+
+    test hasNewlines {
+        const test_piece_false = Piece{
+            .cache = 0,
+            .byte_start = 0,
+            .byte_len = 10,
+            .newline_count = 0,
+        };
+        try expect(!test_piece_false.hasNewlines());
+
+        const test_piece_true = Piece{
+            .cache = 1,
+            .byte_start = 11,
+            .byte_len = 2135,
+            .newline_start = 45,
+            .newline_count = 13,
+        };
+        try expect(test_piece_true.hasNewlines());
+    }
+
+    fn getNewlineStart(self: *const Self) ?usize {
+        if (self.hasNewlines()) {
+            return self.newline_start;
+        } else return null;
+    }
+
+    test getNewlineStart {
+        const test_piece_none = Piece{
+            .cache = 1,
+            .byte_start = 57,
+            .byte_len = 12832,
+            .newline_start = 57,
+            .newline_count = 0,
+        };
+        try expectEqual(@as(?usize, null), test_piece_none.getNewlineStart());
+
+        const test_piece_some = Piece{
+            .cache = 1,
+            .byte_start = 98,
+            .byte_len = 1298,
+            .newline_start = 289,
+            .newline_count = 1,
+        };
+        try expectEqual(@as(usize, 289), test_piece_some.getNewlineStart().?);
+    }
+
+    fn getNewlineEnd(self: *const Self) ?usize {
+        if (self.hasNewlines()) {
+            return self.newline_start + self.newline_count;
+        } else return null;
+    }
+
+    test getNewlineEnd {
+        const test_piece_none = Piece{
+            .cache = 0,
+            .byte_start = 13,
+            .byte_len = 1000,
+            .newline_start = 987,
+            .newline_count = 0,
+        };
+        try expectEqual(@as(?usize, null), test_piece_none.getNewlineEnd());
+
+        const test_piece_some = Piece{
+            .cache = 0,
+            .byte_start = 0,
+            .byte_len = 1298432,
+            .newline_start = 1384,
+            .newline_count = 1,
+        };
+        try expectEqual(
+            @as(usize, 1385),
+            test_piece_some.getNewlineEnd().?,
+        );
+
+        const test_piece_some_more = Piece{
+            .cache = 1,
+            .byte_start = 13,
+            .byte_len = 1342,
+            .newline_start = 15,
+            .newline_count = 18,
+        };
+        try expectEqual(
+            @as(usize, 33),
+            test_piece_some_more.getNewlineEnd().?,
+        );
+    }
 };
 
 const PieceIndex = struct {
-    /// Index into array of pieces
+    /// Index into array of pieces.
     piece: usize,
 
-    /// Byte offset from start of piece (piece's byte offset)
+    /// Byte offset from start of piece (piece's byte offset).
     offset: usize,
 };
 
@@ -56,7 +182,43 @@ const Cache = struct {
         return result;
     }
 
-    fn deinit(self: *Self) void {
+    test init {
+        const test_cache_empty = try Cache.init(testing.allocator, "");
+        try expectEqual(@as(usize, 0), test_cache_empty.bytes.items.len);
+        try expectEqual(@as(usize, 0), test_cache_empty.newlines.items.len);
+        test_cache_empty.deinit();
+
+        const test_cache_no_newlines = try Cache.init(
+            testing.allocator,
+            "this has no newlines",
+        );
+        try expectEqualStrings(
+            "this has no newlines",
+            test_cache_no_newlines.bytes.items,
+        );
+        try expectEqual(
+            @as(usize, 0),
+            test_cache_no_newlines.newlines.items.len,
+        );
+        test_cache_no_newlines.deinit();
+
+        const test_cache_newlines = try Cache.init(
+            testing.allocator,
+            "test\n\noh no\r\n",
+        );
+        try expectEqualStrings(
+            "test\n\noh no\r\n",
+            test_cache_newlines.bytes.items,
+        );
+        try expectEqualSlices(
+            usize,
+            &[_]usize{ 4, 5, 12 },
+            test_cache_newlines.newlines.items,
+        );
+        test_cache_newlines.deinit();
+    }
+
+    fn deinit(self: *const Self) void {
         self.bytes.deinit();
         self.newlines.deinit();
     }
@@ -65,26 +227,32 @@ const Cache = struct {
         return self.bytes.items.len;
     }
 
-    fn numNewlines(self: *const Self) usize {
+    fn newlineCount(self: *const Self) usize {
         return self.newlines.items.len;
     }
 
-    fn numLines(self: *const Self) usize {
-        return self.numNewlines() + 1;
+    fn lineCount(self: *const Self) usize {
+        return self.newlineCount() + 1;
+    }
+
+    fn getNewlines(self: *const Self, piece: *const Piece) []usize {
+        const start = piece.getNewlineStart() catch return {};
+        const end = piece.getNewlineEnd() catch return {};
+        return self.newlines.items[start..end];
     }
 
     fn append(self: *Self, content: []const u8) !Piece {
         const old_len = self.size();
-        const old_newlines = self.numNewlines();
+        const old_newlines = self.newlineCount();
         var result = Piece{
-            .cache = 1, // Appending assumes use of append cache, index 1
+            .cache = 1, // Appending assumes use of append cache, index 1.
             .byte_start = old_len,
             .byte_len = content.len,
             .newline_start = old_newlines,
-            .newline_num = 0,
+            .newline_count = 0,
         };
 
-        // Restore cache to original state if error
+        // Restore cache to original state if error.
         errdefer {
             self.bytes.shrinkRetainingCapacity(old_len);
             self.newlines.shrinkRetainingCapacity(old_newlines);
@@ -92,15 +260,43 @@ const Cache = struct {
 
         try self.bytes.appendSlice(content);
 
-        // Scan for newlines in added content
+        // Scan for newlines in added content.
         for (content, 0..) |b, i| {
             if (b == '\n') {
                 try self.newlines.append(i + old_len);
-                result.newline_num += 1;
+                result.newline_count += 1;
             }
         }
 
         return result;
+    }
+
+    test append {
+        var test_cache = try Cache.init(testing.allocator, "");
+        const piece_1 = try test_cache.append("testing append");
+        try expectEqualStrings("testing append", test_cache.bytes.items);
+        try expectEqual(@as(usize, 0), test_cache.newlines.items.len);
+        try expectEqual(@as(usize, 0), piece_1.byte_start);
+        try expectEqual(@as(usize, 14), piece_1.byte_len);
+        try expectEqual(@as(usize, 0), piece_1.newline_count);
+        test_cache.deinit();
+
+        test_cache = try Cache.init(testing.allocator, "test one two\nthree");
+        const piece_2 = try test_cache.append(" four\nfive");
+        try expectEqualStrings(
+            "test one two\nthree four\nfive",
+            test_cache.bytes.items,
+        );
+        try expectEqualSlices(
+            usize,
+            &[_]usize{ 12, 23 },
+            test_cache.newlines.items,
+        );
+        try expectEqual(@as(usize, 18), piece_2.byte_start);
+        try expectEqual(@as(usize, 10), piece_2.byte_len);
+        try expectEqual(@as(usize, 1), piece_2.newline_start);
+        try expectEqual(@as(usize, 1), piece_2.newline_count);
+        test_cache.deinit();
     }
 };
 
@@ -119,24 +315,175 @@ pub const FileBuffer = struct {
         };
 
         const allocator = result.allocator.allocator();
-        result.pieces = ArrayList(Piece).init(allocator);
 
         result.caches[0] = try Cache.init(allocator, content);
         result.caches[1] = try Cache.init(allocator, "");
 
+        result.pieces = ArrayList(Piece).init(allocator);
         try result.pieces.append(Piece{
             .cache = 0,
             .byte_start = 0,
             .byte_len = content.len,
             .newline_start = 0,
-            .newline_num = result.caches[0].numNewlines(),
+            .newline_count = result.caches[0].newlineCount(),
         });
 
         return result;
     }
 
-    pub fn deinit(self: *Self) void {
+    test init {
+        const fb_empty = try FileBuffer.init("");
+        try expectEqual(@as(usize, 2), fb_empty.caches.len);
+        try expectEqualStrings("", fb_empty.caches[0].bytes.items);
+        try expectEqualStrings("", fb_empty.caches[1].bytes.items);
+        try expectEqual(@as(usize, 1), fb_empty.pieces.items.len);
+        const fb_empty_piece = fb_empty.pieces.items[0];
+        try expectEqual(@as(usize, 0), fb_empty_piece.cache);
+        try expectEqual(@as(usize, 0), fb_empty_piece.byte_start);
+        try expectEqual(@as(usize, 0), fb_empty_piece.byte_len);
+        try expectEqual(@as(usize, 0), fb_empty_piece.newline_count);
+        fb_empty.deinit();
+
+        const fb_no_newline = try FileBuffer.init("testing one line");
+        try expectEqual(@as(usize, 2), fb_no_newline.caches.len);
+        try expectEqualStrings(
+            "testing one line",
+            fb_no_newline.caches[0].bytes.items,
+        );
+        try expectEqualStrings("", fb_no_newline.caches[1].bytes.items);
+        try expectEqual(@as(usize, 1), fb_no_newline.pieces.items.len);
+        const fb_no_newline_piece = fb_no_newline.pieces.items[0];
+        try expectEqual(@as(usize, 0), fb_no_newline_piece.cache);
+        try expectEqual(@as(usize, 0), fb_no_newline_piece.byte_start);
+        try expectEqual(@as(usize, 16), fb_no_newline_piece.byte_len);
+        try expectEqual(@as(usize, 0), fb_no_newline_piece.newline_count);
+        fb_no_newline.deinit();
+
+        const fb_newline = try FileBuffer.init("one two\nthree\nfour");
+        try expectEqual(@as(usize, 2), fb_newline.caches.len);
+        try expectEqualStrings(
+            "one two\nthree\nfour",
+            fb_newline.caches[0].bytes.items,
+        );
+        try expectEqualStrings("", fb_newline.caches[1].bytes.items);
+        try expectEqual(@as(usize, 1), fb_newline.pieces.items.len);
+        const fb_newline_piece = fb_newline.pieces.items[0];
+        try expectEqual(@as(usize, 0), fb_newline_piece.cache);
+        try expectEqual(@as(usize, 0), fb_newline_piece.byte_start);
+        try expectEqual(@as(usize, 18), fb_newline_piece.byte_len);
+        try expectEqual(@as(usize, 2), fb_newline_piece.newline_count);
+        try expectEqual(@as(usize, 0), fb_newline_piece.newline_start);
+        fb_newline.deinit();
+    }
+
+    pub fn deinit(self: *const Self) void {
+        for (self.caches) |cache| {
+            cache.deinit();
+        }
         self.pieces.deinit();
         self.allocator.deinit();
+    }
+
+    pub fn size(self: *const Self) usize {
+        var result: usize = 0;
+        for (self.pieces.items) |piece| {
+            result += piece.byte_len;
+        }
+        return result;
+    }
+
+    pub fn newlineCount(self: *const Self) usize {
+        var result: usize = 0;
+        for (self.pieces.items) |piece| {
+            result += piece.newline_count;
+        }
+        return result;
+    }
+
+    pub fn lineCount(self: *const Self) usize {
+        return self.newlineCount() + 1;
+    }
+
+    pub fn getContent(self: *const Self, allocator: Allocator) !ArrayList(u8) {
+        var result = try ArrayList(u8).initCapacity(allocator, self.size());
+        for (self.pieces.items) |piece| {
+            const cache = self.caches[piece.cache];
+            result.appendSliceAssumeCapacity(
+                cache.bytes.items[piece.byte_start..piece.getByteEnd()],
+            );
+        }
+        return result;
+    }
+
+    /// Get line in file, excluding terminating newline.
+    pub fn getLine(self: *const Self, allocator: Allocator, line: usize) !ArrayList(u8) {
+        if (line > self.newlineCount()) {
+            return error.OutOfBounds;
+        }
+        var result = ArrayList(u8).init(allocator);
+        var lines_remaining = line;
+
+        for (self.pieces.items) |piece| {
+            const cache = self.caches[piece.cache];
+            const cache_content = cache.bytes.items;
+            const cache_newlines = cache.newlines.items;
+
+            // Keep iterating to find correct line.
+            if (lines_remaining > piece.newline_count) {
+                lines_remaining -= piece.newline_count;
+                continue;
+            }
+            // Line starts in current piece.
+            else {
+                const byte_start = if (lines_remaining > 0)
+                    cache_newlines[lines_remaining - 1] + 1
+                else
+                    piece.byte_start;
+
+                // Strip potential '\r'.
+                const byte_end = if (piece.newline_count > lines_remaining)
+                    if (cache_content[cache_newlines[lines_remaining] - 1] == '\r')
+                        cache_newlines[lines_remaining] - 1
+                    else
+                        cache_newlines[lines_remaining]
+                else
+                    piece.getByteEnd();
+
+                lines_remaining = 0;
+
+                if (byte_start < byte_end) {
+                    try result.appendSlice(cache_content[byte_start..byte_end]);
+                }
+                continue;
+            }
+        }
+
+        return result;
+    }
+
+    test getLine {
+        const fb_empty = try FileBuffer.init("");
+        const empty_line = try fb_empty.getLine(testing.allocator, 0);
+        fb_empty.deinit();
+        try expectEqualStrings("", empty_line.items);
+        empty_line.deinit();
+
+        const fb_one_line = try FileBuffer.init("testing one line");
+        const one_line = try fb_one_line.getLine(testing.allocator, 0);
+        fb_one_line.deinit();
+        try expectEqualStrings("testing one line", one_line.items);
+        one_line.deinit();
+
+        const fb_multi_line = try FileBuffer.init("one two\r\nthree\nfour");
+        const multi_line_0 = try fb_multi_line.getLine(testing.allocator, 0);
+        const multi_line_1 = try fb_multi_line.getLine(testing.allocator, 1);
+        const multi_line_2 = try fb_multi_line.getLine(testing.allocator, 2);
+        fb_multi_line.deinit();
+        try expectEqualStrings("one two", multi_line_0.items);
+        multi_line_0.deinit();
+        try expectEqualStrings("three", multi_line_1.items);
+        multi_line_1.deinit();
+        try expectEqualStrings("four", multi_line_2.items);
+        multi_line_2.deinit();
     }
 };
