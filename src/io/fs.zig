@@ -16,5 +16,5 @@ pub fn open(allocator: Allocator, file_path: []const u8) !FileBuffer {
 
     var file_bytes = try file.reader().readAllAlloc(allocator, std.math.maxInt(u32));
 
-    return FileBuffer.init(file_bytes);
+    return FileBuffer.init(allocator, file_bytes);
 }

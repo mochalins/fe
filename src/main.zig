@@ -10,6 +10,7 @@ const ascii = std.ascii;
 
 const Key = io.key.Key;
 const Term = io.term.Term;
+const FileBuffer = core.filebuffer.FileBuffer;
 
 const ArrayList = std.ArrayList;
 
@@ -60,6 +61,7 @@ const Editor = struct {
 
     allocator: mem.Allocator,
     file_path: []const u8,
+    file_buffer: FileBuffer,
     rows: ArrayList(Row),
     dirty: bool = false,
     quit_times: u3 = FE_QUIT_TIMES,
@@ -76,6 +78,7 @@ const Editor = struct {
         return Self{
             .allocator = allocator,
             .file_path = undefined,
+            .file_buffer = undefined,
             .term = try Term.init(),
             .rows = ArrayList(Row).init(allocator),
             .status_message = try ArrayList(u8).initCapacity(allocator, 80),
@@ -91,7 +94,11 @@ const Editor = struct {
         if (self.syntax == null) return;
 
         for (0..row.render.len) |i| {
-            if (prev_sep and i != row.render.len - 1 and row.render[i] == '/' and row.render[i + 1] == '/') {
+            if (prev_sep and
+                i != row.render.len - 1 and
+                row.render[i] == '/' and
+                row.render[i + 1] == '/')
+            {
                 @memset(row.hl, Highlight.comment);
                 return;
             }
@@ -122,7 +129,10 @@ const Editor = struct {
                         row.render[i..@min(row.render.len - 1, i + keyword.len)],
                     ) and isSeparator(row.render[i + keyword.len])) {
                         prev_sep = false;
-                        @memset(row.hl[i..@min(row.render.len - 1, i + keyword.len)], Highlight.number);
+                        @memset(
+                            row.hl[i..@min(row.render.len - 1, i + keyword.len)],
+                            Highlight.number,
+                        );
                         break :keyword_match;
                     }
                 }
@@ -148,7 +158,10 @@ const Editor = struct {
 
         var i: usize = 0;
         // Just read the entire file into memory... what could go wrong
-        var file_bytes = try file.reader().readAllAlloc(self.allocator, std.math.maxInt(u32));
+        var file_bytes = try file.reader().readAllAlloc(
+            self.allocator,
+            std.math.maxInt(u32),
+        );
         var it = std.mem.split(u8, file_bytes, "\n");
 
         while (it.next()) |line| {
@@ -183,7 +196,9 @@ const Editor = struct {
         var file_row = self.row_offset + self.cy;
         var file_col = self.col_offset + self.cx;
 
-        if (file_row >= self.rows.items.len or (file_col == 0 and file_row == 0)) return;
+        if (file_row >= self.rows.items.len or
+            (file_col == 0 and file_row == 0))
+            return;
 
         var row = &self.rows.items[file_row];
         if (file_col == 0) {
@@ -274,7 +289,10 @@ const Editor = struct {
     }
 
     fn fixCursor(self: *Self) void {
-        if (self.cy == self.term.rows - 1) self.row_offset += 1 else self.cy += 1;
+        if (self.cy == self.term.rows - 1)
+            self.row_offset += 1
+        else
+            self.cy += 1;
 
         self.cx = 0;
         self.col_offset = 0;
@@ -330,7 +348,11 @@ const Editor = struct {
         var prev_len: usize = 0;
         for (self.rows.items) |row| {
             mem.copy(u8, buf[prev_len .. prev_len + row.src.len], row.src);
-            mem.copy(u8, buf[prev_len + row.src.len .. prev_len + row.src.len + 1], "\n");
+            mem.copy(
+                u8,
+                buf[prev_len + row.src.len .. prev_len + row.src.len + 1],
+                "\n",
+            );
             prev_len += row.src.len + 1;
         }
 
@@ -365,11 +387,11 @@ const Editor = struct {
 
         switch (@as(Key, @enumFromInt(c))) {
             .enter => return try self.insertNewline(),
-            .ctrl_c => return,
-            .ctrl_q => {
+            .ctrl_q => return,
+            .ctrl_c => {
                 if (self.dirty and self.quit_times > 0) {
                     try self.setStatusMessage(
-                        "WARNING!!! File has unsaved changes. Press Ctrl-Q {d} more times to quit.",
+                        "WARNING!!! File has unsaved changes. Press Ctrl-C {d} more times to quit.",
                         .{self.quit_times},
                     );
                     self.quit_times -= 1;
@@ -381,18 +403,27 @@ const Editor = struct {
             },
             .ctrl_s => {
                 self.save() catch |err| {
-                    try self.setStatusMessage("Can't save! I/O error: {any}", .{err});
+                    try self.setStatusMessage(
+                        "Can't save! I/O error: {any}",
+                        .{err},
+                    );
                 };
             },
             .backspace, .ctrl_h, .del => {
-                if (@as(Key, @enumFromInt(c)) == .del) self.moveCursor(@intFromEnum(Key.arrow_right));
+                if (@as(Key, @enumFromInt(c)) == .del)
+                    self.moveCursor(@intFromEnum(Key.arrow_right));
                 try self.delChar();
             },
-            .arrow_left, .arrow_up, .arrow_down, .arrow_right => self.moveCursor(c),
+            .arrow_left,
+            .arrow_up,
+            .arrow_down,
+            .arrow_right,
+            => self.moveCursor(c),
             .esc, .ctrl_l => return,
             .home => self.cx = 0,
             .end => {
-                if (self.cy < self.rows.items.len) self.cx = self.rows.items[self.cy].src.len;
+                if (self.cy < self.rows.items.len)
+                    self.cx = self.rows.items[self.cy].src.len;
             },
             .page_up, .page_down => |pg| {
                 if (pg == .page_up and self.cy != 0) {
@@ -415,16 +446,20 @@ const Editor = struct {
 
     // Insert 'c' at the current prompt position.
     fn insertChar(self: *Self, c: u8) !void {
-        var file_row = self.row_offset + self.cy;
-        var file_col = self.col_offset + self.cx;
+        const line_ind: usize = self.row_offset + self.cy;
+        const line_offset: usize = self.col_offset + self.cx;
 
-        if (file_row >= self.rows.items.len) {
-            for (self.rows.items.len..file_row + 1) |_| try self.insertRow(self.rows.items.len, "");
-        }
+        if (line_ind > self.file_buffer.lineCount()) return error.OutOfBounds;
 
-        try self.rowInsertChar(&self.rows.items[file_row], file_col, c);
+        const line_byte_index = try self.file_buffer.getLineIndex(line_ind);
+        try self.file_buffer.insert(line_byte_index + line_offset, &[_]u8{c});
 
-        if (self.cx == self.term.cols - 1) self.col_offset += 1 else self.cx += 1;
+        if (self.cx == self.term.cols - 1)
+            self.col_offset += 1
+        else
+            self.cx += 1;
+
+        self.dirty = true;
     }
 
     fn deinit(self: *Self) void {
@@ -454,8 +489,15 @@ const Editor = struct {
                 if (self.rows.items.len == 0 and y == self.term.rows / 3) {
                     var buf: [32]u8 = undefined;
 
-                    var welcome = try std.fmt.bufPrint(&buf, "fe editor -- version {s}\x1b[0K\r\n", .{FE_VERSION});
-                    var padding: usize = if (welcome.len > self.term.cols) 0 else (self.term.cols - welcome.len) / 2;
+                    var welcome = try std.fmt.bufPrint(
+                        &buf,
+                        "fe editor -- version {s}\x1b[0K\r\n",
+                        .{FE_VERSION},
+                    );
+                    var padding: usize = if (welcome.len > self.term.cols)
+                        0
+                    else
+                        (self.term.cols - welcome.len) / 2;
                     for (0..padding) |_| try ab.appendSlice(" ");
                     try ab.appendSlice(welcome);
                 } else {
@@ -463,7 +505,15 @@ const Editor = struct {
                 }
             } else {
                 var row = &self.rows.items[file_row];
-                var len = if (row.render.len <= self.col_offset) 0 else row.render.len - self.col_offset;
+                const row_render = try self.file_buffer.getLine(
+                    self.allocator,
+                    file_row,
+                );
+                defer row_render.deinit();
+                var len = if (row_render.items.len <= self.col_offset)
+                    0
+                else
+                    row_render.items.len - self.col_offset;
                 var current_color: u8 = 0;
 
                 if (len > 0) {
@@ -471,7 +521,10 @@ const Editor = struct {
 
                     var start = self.col_offset;
                     for (0..len) |j| {
-                        var hl = row.hl[j];
+                        var hl = if (j < row.hl.len)
+                            row.hl[j]
+                        else
+                            Highlight.normal;
                         switch (hl) {
                             Highlight.normal => {
                                 if (current_color > 0) {
@@ -479,7 +532,8 @@ const Editor = struct {
                                     current_color = 0;
                                 }
 
-                                try ab.appendSlice(row.render[start + j .. start + j + 1]);
+                                try ab.appendSlice(row_render.items[start + j .. start + j + 1]);
+                                // try ab.appendSlice(row.render[start + j .. start + j + 1]);
                             },
                             else => {
                                 var color = @intFromEnum(hl);
@@ -487,9 +541,14 @@ const Editor = struct {
                                     var buf: [16]u8 = undefined;
 
                                     current_color = color;
-                                    try ab.appendSlice(try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{color}));
+                                    try ab.appendSlice(try std.fmt.bufPrint(
+                                        &buf,
+                                        "\x1b[{d}m",
+                                        .{color},
+                                    ));
                                 }
-                                try ab.appendSlice(row.render[start + j .. start + j + 1]);
+                                try ab.appendSlice(row_render.items[start + j .. start + j + 1]);
+                                // try ab.appendSlice(row.render[start + j .. start + j + 1]);
                             },
                         }
                     }
@@ -506,12 +565,15 @@ const Editor = struct {
         var rstatus: [80]u8 = undefined;
         var modified: []const u8 = if (self.dirty) "(modified)" else "";
 
-        var status = try std.fmt.allocPrint(self.allocator, "{s} - {d} lines {s}", .{
-            self.file_path,
-            self.rows.items.len,
-            modified,
-        });
-        var len = if (status.len > self.term.cols) self.term.cols else status.len;
+        var status = try std.fmt.allocPrint(
+            self.allocator,
+            "{s} - {d} lines {s}",
+            .{ self.file_path, self.rows.items.len, modified },
+        );
+        var len = if (status.len > self.term.cols)
+            self.term.cols
+        else
+            status.len;
         _ = try std.fmt.bufPrint(&rstatus, "{d}/{d}", .{
             self.row_offset + self.cy + 1,
             self.rows.items.len,
@@ -544,7 +606,11 @@ const Editor = struct {
                 cx += 1;
             }
         }
-        try ab.appendSlice(try std.fmt.bufPrint(&buf, "\x1b[{d};{d}H", .{ self.cy + 1, cx }));
+        try ab.appendSlice(try std.fmt.bufPrint(
+            &buf,
+            "\x1b[{d};{d}H",
+            .{ self.cy + 1, cx },
+        ));
         try ab.appendSlice("\x1b[?25h");
 
         _ = try os.write(os.STDOUT_FILENO, ab.items);
@@ -578,12 +644,18 @@ const Editor = struct {
                     var row = self.rows.items[file_row];
 
                     if (file_col < row.src.len) {
-                        if (self.cx == self.term.cols - 1) self.col_offset += 1 else self.cx += 1;
+                        if (self.cx == self.term.cols - 1)
+                            self.col_offset += 1
+                        else
+                            self.cx += 1;
                     } else if (file_col == row.src.len) {
                         self.cx = 0;
                         self.col_offset = 0;
 
-                        if (self.cy == self.term.rows - 1) self.row_offset += 1 else self.cy += 1;
+                        if (self.cy == self.term.rows - 1)
+                            self.row_offset += 1
+                        else
+                            self.cy += 1;
                     }
                 }
             },
@@ -596,7 +668,10 @@ const Editor = struct {
             },
             .arrow_down => {
                 if (file_row < self.rows.items.len) {
-                    if (self.cy == self.term.rows - 1) self.row_offset += 1 else self.cy += 1;
+                    if (self.cy == self.term.rows - 1)
+                        self.row_offset += 1
+                    else
+                        self.cy += 1;
                 }
             },
             else => unreachable,
@@ -604,7 +679,10 @@ const Editor = struct {
 
         file_row = self.row_offset + self.cy;
         file_col = self.col_offset + self.cx;
-        var row_len: usize = if (file_row >= self.rows.items.len) 0 else self.rows.items[file_row].src.len;
+        var row_len: usize = if (file_row >= self.rows.items.len)
+            0
+        else
+            self.rows.items[file_row].src.len;
         if (file_col > row_len) {
             self.cx -= file_col - row_len;
 
@@ -615,7 +693,11 @@ const Editor = struct {
         }
     }
 
-    fn setStatusMessage(self: *Self, comptime format: []const u8, args: anytype) !void {
+    fn setStatusMessage(
+        self: *Self,
+        comptime format: []const u8,
+        args: anytype,
+    ) !void {
         self.status_message.clearRetainingCapacity();
         var buf = try std.fmt.allocPrint(self.allocator, format, args);
         try self.status_message.appendSlice(buf);
@@ -637,10 +719,10 @@ pub fn main() !void {
     defer editor.deinit();
     try editor.term.updateSize();
     try editor.open(file_path);
-    var fb = try io.fs.open(allocator, file_path);
-    defer fb.deinit();
+    editor.file_buffer = try io.fs.open(allocator, file_path);
+    defer editor.file_buffer.deinit();
 
-    try editor.setStatusMessage("HELP: Ctrl-S = save | Ctrl-Q = quit", .{});
+    try editor.setStatusMessage("HELP: Ctrl-S = save | Ctrl-C = quit", .{});
     while (true) {
         try editor.refreshScreen();
         try editor.processKeypress();
