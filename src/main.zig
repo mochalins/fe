@@ -9,8 +9,10 @@ const mem = std.mem;
 const ascii = std.ascii;
 
 const Key = io.key.Key;
-const Term = io.term.Term;
+const term = io.term;
 const FileBuffer = core.filebuffer.FileBuffer;
+const Color = core.color.Color;
+const ColorDefault = core.color.ColorDefault;
 
 const ArrayList = std.ArrayList;
 
@@ -66,7 +68,6 @@ const Editor = struct {
     dirty: bool = false,
     quit_times: u3 = FE_QUIT_TIMES,
     syntax: ?Syntax = Syntax.zig,
-    term: Term = undefined,
     cx: usize = 0,
     cy: usize = 0,
     row_offset: usize = 0,
@@ -74,12 +75,11 @@ const Editor = struct {
     status_message: ArrayList(u8),
 
     fn init(allocator: mem.Allocator) !Self {
-        defer _ = os.write(os.STDOUT_FILENO, "\x1b[?1049h") catch {};
+        try term.init();
         return Self{
             .allocator = allocator,
             .file_path = undefined,
             .file_buffer = undefined,
-            .term = try Term.init(),
             .rows = ArrayList(Row).init(allocator),
             .status_message = try ArrayList(u8).initCapacity(allocator, 80),
         };
@@ -212,8 +212,8 @@ const Editor = struct {
             if (self.cy == 0) self.row_offset -= 1 else self.cy -= 1;
             self.cx = file_col;
 
-            if (self.cx >= self.term.cols) {
-                var shift: usize = self.term.cols - self.cx + 1;
+            if (self.cx >= term.size.cols) {
+                var shift: usize = term.size.cols - self.cx + 1;
                 self.cx -= shift;
                 self.col_offset += shift;
             }
@@ -235,30 +235,6 @@ const Editor = struct {
         mem.copy(u8, row.src[at..row.src.len], row.src[at + 1 .. row.src.len]);
         try self.updateRow(row);
         row.src.len -= 1;
-        self.dirty = true;
-    }
-
-    /// Insert a character at the specified position in a row, moving the remaining
-    /// chars on the right if needed.
-    fn rowInsertChar(self: *Self, row: *Row, at: usize, c: u8) !void {
-        var old_src = try self.allocator.dupe(u8, row.src);
-        row.src = try self.allocator.realloc(row.src, old_src.len + 1);
-
-        if (at > row.src.len) {
-            @memset(row.src[at .. at + 1], c);
-        } else {
-            var j: usize = 0;
-            for (0..row.src.len) |i| {
-                if (i == at) {
-                    row.src[i] = c;
-                } else {
-                    row.src[i] = old_src[j];
-                    j += 1;
-                }
-            }
-        }
-
-        try self.updateRow(row);
         self.dirty = true;
     }
 
@@ -289,7 +265,7 @@ const Editor = struct {
     }
 
     fn fixCursor(self: *Self) void {
-        if (self.cy == self.term.rows - 1)
+        if (self.cy == term.size.rows - 3)
             self.row_offset += 1
         else
             self.cy += 1;
@@ -397,8 +373,7 @@ const Editor = struct {
                     self.quit_times -= 1;
                     return;
                 }
-                _ = os.write(os.STDOUT_FILENO, "\x1b[?1049l") catch {};
-                self.term.deinit() catch unreachable;
+                term.deinit();
                 os.exit(0);
             },
             .ctrl_s => {
@@ -428,13 +403,15 @@ const Editor = struct {
             .page_up, .page_down => |pg| {
                 if (pg == .page_up and self.cy != 0) {
                     self.cy = 0;
-                } else if (pg == .page_down and self.cy != self.term.rows - 1) {
-                    self.cy = self.term.rows - 1;
+                } else if (pg == .page_down and
+                    self.cy != term.size.rows - 3)
+                {
+                    self.cy = term.size.rows - 3;
                 }
 
                 var direction: Key =
                     if (pg == Key.page_up) .arrow_up else .arrow_down;
-                for (0..self.term.rows - 1) |_| {
+                for (0..term.size.rows - 3) |_| {
                     self.moveCursor(@intFromEnum(direction));
                 }
             },
@@ -454,7 +431,7 @@ const Editor = struct {
         const line_byte_index = try self.file_buffer.getLineIndex(line_ind);
         try self.file_buffer.insert(line_byte_index + line_offset, &[_]u8{c});
 
-        if (self.cx == self.term.cols - 1)
+        if (self.cx == term.size.cols - 1)
             self.col_offset += 1
         else
             self.cx += 1;
@@ -463,8 +440,7 @@ const Editor = struct {
     }
 
     fn deinit(self: *Self) void {
-        _ = os.write(os.STDOUT_FILENO, "\x1b[?1049l") catch {};
-        self.term.deinit() catch unreachable;
+        term.deinit();
         for (self.rows.items) |row| {
             self.allocator.free(row.src);
             self.allocator.free(row.render);
@@ -475,18 +451,19 @@ const Editor = struct {
 
     // Writes the whole screen using VT100 escape characters.
     fn refreshScreen(self: *Self) !void {
-        var ab = ArrayList(u8).init(self.allocator);
-        defer ab.deinit();
+        try term.hideCursor();
+        defer term.showCursor() catch {};
 
-        try ab.appendSlice("\x1b[?25l"); // Hide cursor
-        try ab.appendSlice("\x1b[H");
+        try term.homeCursor();
 
         // Draw rows
-        for (0..self.term.rows) |y| {
+        for (0..term.size.rows - 2) |y| {
             var file_row = self.row_offset + y;
 
             if (file_row >= self.rows.items.len) {
-                if (self.rows.items.len == 0 and y == self.term.rows / 3) {
+                if (self.rows.items.len == 0 and
+                    y == (term.size.rows - 2) / 3)
+                {
                     var buf: [32]u8 = undefined;
 
                     var welcome = try std.fmt.bufPrint(
@@ -494,14 +471,15 @@ const Editor = struct {
                         "fe editor -- version {s}\x1b[0K\r\n",
                         .{FE_VERSION},
                     );
-                    var padding: usize = if (welcome.len > self.term.cols)
+                    var padding: usize = if (welcome.len > term.size.cols)
                         0
                     else
-                        (self.term.cols - welcome.len) / 2;
-                    for (0..padding) |_| try ab.appendSlice(" ");
-                    try ab.appendSlice(welcome);
+                        (term.size.cols - welcome.len) / 2;
+                    for (0..padding) |_| try term.writeBuffered(" ");
+                    try term.writeBuffered(welcome);
                 } else {
-                    try ab.appendSlice("~\x1b[0K\r\n");
+                    try term.writeBuffered("~\x1b[0K\r\n");
+                    try term.writeBuffered("~\x1b[0K\r\n");
                 }
             } else {
                 var row = &self.rows.items[file_row];
@@ -517,7 +495,7 @@ const Editor = struct {
                 var current_color: u8 = 0;
 
                 if (len > 0) {
-                    if (len > self.term.cols) len = self.term.cols;
+                    if (len > term.size.cols) len = term.size.cols;
 
                     var start = self.col_offset;
                     for (0..len) |j| {
@@ -528,40 +506,40 @@ const Editor = struct {
                         switch (hl) {
                             Highlight.normal => {
                                 if (current_color > 0) {
-                                    try ab.appendSlice("\x1b[39m");
+                                    try term.setFgColorBuffered(
+                                        Color.initDefault(),
+                                    );
                                     current_color = 0;
                                 }
 
-                                try ab.appendSlice(row_render.items[start + j .. start + j + 1]);
-                                // try ab.appendSlice(row.render[start + j .. start + j + 1]);
+                                try term.writeBuffered(
+                                    row_render.items[start + j .. start + j + 1],
+                                );
                             },
                             else => {
                                 var color = @intFromEnum(hl);
                                 if (color != current_color) {
-                                    var buf: [16]u8 = undefined;
-
+                                    try term.setFgColorBuffered(
+                                        Color.init16(@enumFromInt(color - 30)),
+                                    );
                                     current_color = color;
-                                    try ab.appendSlice(try std.fmt.bufPrint(
-                                        &buf,
-                                        "\x1b[{d}m",
-                                        .{color},
-                                    ));
                                 }
-                                try ab.appendSlice(row_render.items[start + j .. start + j + 1]);
-                                // try ab.appendSlice(row.render[start + j .. start + j + 1]);
+                                try term.writeBuffered(
+                                    row_render.items[start + j .. start + j + 1],
+                                );
                             },
                         }
                     }
                 }
-                try ab.appendSlice("\x1b[39m");
-                try ab.appendSlice("\x1b[0K");
-                try ab.appendSlice("\r\n");
+                try term.setFgColorBuffered(Color.initDefault());
+                try term.writeBuffered("\x1b[0K");
+                try term.writeBuffered("\r\n");
             }
         }
 
         // Create a two status rows status. First row:
-        try ab.appendSlice("\x1b[0K");
-        try ab.appendSlice("\x1b[7m");
+        try term.writeBuffered("\x1b[0K");
+        try term.writeBuffered("\x1b[7m");
         var rstatus: [80]u8 = undefined;
         var modified: []const u8 = if (self.dirty) "(modified)" else "";
 
@@ -570,29 +548,29 @@ const Editor = struct {
             "{s} - {d} lines {s}",
             .{ self.file_path, self.rows.items.len, modified },
         );
-        var len = if (status.len > self.term.cols)
-            self.term.cols
+        var len = if (status.len > term.size.cols)
+            term.size.cols
         else
             status.len;
         _ = try std.fmt.bufPrint(&rstatus, "{d}/{d}", .{
             self.row_offset + self.cy + 1,
             self.rows.items.len,
         });
-        try ab.appendSlice(status[0..status.len]);
+        try term.writeBuffered(status[0..status.len]);
 
-        for (len..self.term.cols) |_| {
-            if (self.term.cols - len == rstatus.len) {
-                try ab.appendSlice(&rstatus);
+        for (len..term.size.cols) |_| {
+            if (term.size.cols - len == rstatus.len) {
+                try term.writeBuffered(&rstatus);
                 break;
             } else {
-                try ab.appendSlice(" ");
+                try term.writeBuffered(" ");
             }
         }
-        try ab.appendSlice("\x1b[0m\r\n");
+        try term.writeBuffered("\x1b[0m\r\n");
 
         // Second row
-        try ab.appendSlice("\x1b[0K");
-        try ab.appendSlice(self.status_message.items);
+        try term.writeBuffered("\x1b[0K");
+        try term.writeBuffered(self.status_message.items);
 
         // Draw cursor
         var buf: [32]u8 = undefined;
@@ -606,14 +584,13 @@ const Editor = struct {
                 cx += 1;
             }
         }
-        try ab.appendSlice(try std.fmt.bufPrint(
+        try term.writeBuffered(try std.fmt.bufPrint(
             &buf,
             "\x1b[{d};{d}H",
             .{ self.cy + 1, cx },
         ));
-        try ab.appendSlice("\x1b[?25h");
 
-        _ = try os.write(os.STDOUT_FILENO, ab.items);
+        try term.flush();
     }
 
     fn moveCursor(self: *Self, c: u8) void {
@@ -629,9 +606,9 @@ const Editor = struct {
                         if (file_row > 0) {
                             self.cy -= 1;
                             self.cx = self.rows.items[file_row - 1].src.len;
-                            if (self.cx > self.term.cols - 1) {
-                                self.col_offset = self.cx - self.term.cols + 1;
-                                self.cx = self.term.cols - 1;
+                            if (self.cx > term.size.cols - 1) {
+                                self.col_offset = self.cx - term.size.cols + 1;
+                                self.cx = term.size.cols - 1;
                             }
                         }
                     }
@@ -644,7 +621,7 @@ const Editor = struct {
                     var row = self.rows.items[file_row];
 
                     if (file_col < row.src.len) {
-                        if (self.cx == self.term.cols - 1)
+                        if (self.cx == term.size.cols - 1)
                             self.col_offset += 1
                         else
                             self.cx += 1;
@@ -652,7 +629,7 @@ const Editor = struct {
                         self.cx = 0;
                         self.col_offset = 0;
 
-                        if (self.cy == self.term.rows - 1)
+                        if (self.cy == term.size.rows - 3)
                             self.row_offset += 1
                         else
                             self.cy += 1;
@@ -668,7 +645,7 @@ const Editor = struct {
             },
             .arrow_down => {
                 if (file_row < self.rows.items.len) {
-                    if (self.cy == self.term.rows - 1)
+                    if (self.cy == term.size.rows - 3)
                         self.row_offset += 1
                     else
                         self.cy += 1;
@@ -717,7 +694,7 @@ pub fn main() !void {
 
     var editor = try Editor.init(allocator);
     defer editor.deinit();
-    try editor.term.updateSize();
+    try term.pollSize();
     try editor.open(file_path);
     editor.file_buffer = try io.fs.open(allocator, file_path);
     defer editor.file_buffer.deinit();

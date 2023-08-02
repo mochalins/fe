@@ -302,6 +302,7 @@ const Cache = struct {
 pub const FileBuffer = struct {
     const Self = @This();
 
+    newline: [2]u8 = [_]u8{ '\n', 0 },
     allocator: Allocator,
     caches: [2]Cache,
     pieces: ArrayList(Piece),
@@ -380,6 +381,12 @@ pub const FileBuffer = struct {
             cache.deinit();
         }
         self.pieces.deinit();
+    }
+
+    pub fn getNewline(self: *const Self) []const u8 {
+        for (self.newline, 0..) |c, i| {
+            if (c == 0) return self.newline[0..i];
+        }
     }
 
     pub fn size(self: *const Self) usize {
@@ -529,6 +536,9 @@ pub const FileBuffer = struct {
         multi_line_1.deinit();
         try expectEqualStrings("four", multi_line_2.items);
         multi_line_2.deinit();
+
+        var test_newline: [2]u8 = [_]u8{ '\n', 0 };
+        _ = test_newline;
     }
 
     /// Retrieve piece based on index.
@@ -553,7 +563,7 @@ pub const FileBuffer = struct {
 
     pub fn insert(self: *Self, index: usize, content: []const u8) !void {
         if (content.len == 0) return;
-        var new_piece = try self.caches[1].append(content);
+        const new_piece = try self.caches[1].append(content);
         const piece_index = self.findPiece(index);
 
         std.debug.assert(piece_index.piece <= self.pieces.items.len);
@@ -662,6 +672,33 @@ pub const FileBuffer = struct {
 
     pub fn insertLine(self: *Self, line: usize, content: []const u8) !void {
         _ = content;
+        _ = line;
+        _ = self;
+        // TODO
+    }
+
+    pub fn delete(self: *Self, index: usize, len: usize) !void {
+        // TODO
+        _ = len;
+        _ = index;
+        _ = self;
+    }
+
+    pub fn getDelete(self: *Self, index: usize, len: usize) !ArrayList(u8) {
+        // TODO
+        _ = len;
+        _ = index;
+        _ = self;
+    }
+
+    pub fn deleteLine(self: *Self, line: usize) !void {
+        // TODO
+        _ = line;
+        _ = self;
+    }
+
+    pub fn getDeleteLine(self: *Self, line: usize) !ArrayList(u8) {
+        // TODO
         _ = line;
         _ = self;
     }
