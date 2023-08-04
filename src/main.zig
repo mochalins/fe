@@ -1,5 +1,6 @@
 pub const core = @import("core.zig");
 pub const io = @import("io.zig");
+pub const ui = @import("ui.zig");
 
 const std = @import("std");
 
@@ -10,7 +11,8 @@ const ascii = std.ascii;
 
 const Key = io.key.Key;
 const term = io.term;
-const FileBuffer = core.filebuffer.FileBuffer;
+const config = core.config;
+const FileBuffer = core.FileBuffer;
 const Color = core.color.Color;
 const ColorDefault = core.color.ColorDefault;
 
@@ -468,7 +470,7 @@ const Editor = struct {
 
                     var welcome = try std.fmt.bufPrint(
                         &buf,
-                        "fe editor -- version {s}\x1b[0K\r\n",
+                        "fe editor -- version {s}",
                         .{FE_VERSION},
                     );
                     var padding: usize = if (welcome.len > term.size.cols)
@@ -477,9 +479,12 @@ const Editor = struct {
                         (term.size.cols - welcome.len) / 2;
                     for (0..padding) |_| try term.writeBuffered(" ");
                     try term.writeBuffered(welcome);
+                    try term.eraseLineEndBuffered();
+                    try term.writeNewlineBuffered();
                 } else {
-                    try term.writeBuffered("~\x1b[0K\r\n");
-                    try term.writeBuffered("~\x1b[0K\r\n");
+                    try term.writeBuffered("~");
+                    try term.eraseLineEndBuffered();
+                    try term.writeNewlineBuffered();
                 }
             } else {
                 var row = &self.rows.items[file_row];
@@ -507,7 +512,7 @@ const Editor = struct {
                             Highlight.normal => {
                                 if (current_color > 0) {
                                     try term.setFgColorBuffered(
-                                        Color.initDefault(),
+                                        config.view_text_normal_color,
                                     );
                                     current_color = 0;
                                 }
@@ -532,13 +537,13 @@ const Editor = struct {
                     }
                 }
                 try term.setFgColorBuffered(Color.initDefault());
-                try term.writeBuffered("\x1b[0K");
-                try term.writeBuffered("\r\n");
+                try term.eraseLineEndBuffered();
+                try term.writeNewlineBuffered();
             }
         }
 
         // Create a two status rows status. First row:
-        try term.writeBuffered("\x1b[0K");
+        try term.eraseLineEndBuffered();
         try term.writeBuffered("\x1b[7m");
         var rstatus: [80]u8 = undefined;
         var modified: []const u8 = if (self.dirty) "(modified)" else "";
@@ -566,10 +571,11 @@ const Editor = struct {
                 try term.writeBuffered(" ");
             }
         }
-        try term.writeBuffered("\x1b[0m\r\n");
+        try term.resetStyleBuffered();
+        try term.writeNewlineBuffered();
 
         // Second row
-        try term.writeBuffered("\x1b[0K");
+        try term.eraseLineEndBuffered();
         try term.writeBuffered(self.status_message.items);
 
         // Draw cursor

@@ -49,7 +49,7 @@ pub fn pollSize() !void {
     }
 }
 
-pub fn getCursorPosition() !void {
+fn getCursorPosition() !void {
     var buf: [32]u8 = undefined;
 
     _ = try os.write(os.STDOUT_FILENO, "\x1b[6n");

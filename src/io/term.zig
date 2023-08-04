@@ -74,21 +74,25 @@ pub fn homeCursor() !void {
 }
 
 pub fn moveCursorUp(rows: u16) !void {
+    if (rows == 0) return;
     var buf: [8]u8 = undefined;
     try writeRaw(try std.fmt.bufPrint(&buf, "\x1b[{d}A", .{rows}));
 }
 
 pub fn moveCursorDown(rows: u16) !void {
+    if (rows == 0) return;
     var buf: [8]u8 = undefined;
     try writeRaw(try std.fmt.bufPrint(&buf, "\x1b[{d}B", .{rows}));
 }
 
 pub fn moveCursorRight(cols: u16) !void {
+    if (cols == 0) return;
     var buf: [8]u8 = undefined;
     try writeRaw(try std.fmt.bufPrint(&buf, "\x1b[{d}C", .{cols}));
 }
 
 pub fn moveCursorLeft(cols: u16) !void {
+    if (cols == 0) return;
     var buf: [8]u8 = undefined;
     try writeRaw(try std.fmt.bufPrint(&buf, "\x1b[{d}D", .{cols}));
 }
@@ -118,6 +122,27 @@ pub fn writeBuffered(content: []const u8) !void {
         buffer_len += clen;
         cstart += clen;
     }
+}
+
+pub fn writeNewlineBuffered() !void {
+    try writeBuffered("\r\n");
+}
+
+/// Erase cursor's line, buffered. Cursor position unchanged.
+pub fn eraseLineBuffered() !void {
+    try writeBuffered("\x1b[2K");
+}
+
+/// Erase cursor's line from start to cursor's column, buffered. Cursor
+/// position unchanged.
+pub fn eraseLineStartBuffered() !void {
+    try writeBuffered("\x1b[1K");
+}
+
+/// Erase cursor's line from cursor's column to end of line, buffered. Cursor
+/// position unchanged.
+pub fn eraseLineEndBuffered() !void {
+    try writeBuffered("\x1b[0K");
 }
 
 pub fn setFgColorBuffered(color: Color) !void {
@@ -188,6 +213,10 @@ pub fn setBgColorBuffered(color: Color) !void {
             .{ rgb.red, rgb.green, rgb.blue },
         )),
     }
+}
+
+pub fn resetStyleBuffered() !void {
+    try writeBuffered("\x1b[0m");
 }
 
 pub fn flush() !void {
