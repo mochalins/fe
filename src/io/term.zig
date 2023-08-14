@@ -11,8 +11,7 @@ pub const impl = switch (builtin.os.tag) {
 
 const root = @import("root");
 const core = root.core;
-const Color = core.color.Color;
-const ColorType = core.color.ColorType;
+const Color = core.Color;
 
 pub const Size = packed struct {
     rows: u16,
@@ -31,6 +30,10 @@ pub fn init() !void {
     buffer_len = 0;
     try impl.init();
     errdefer impl.deinit();
+
+    // TODO: Eventually replace all instances of `STDOUT_FILENO` with a `File`
+    // and accompanying `isTty`, `supportsAnsiEscapeCodes` checks.
+
     // Enter alternate screen
     _ = try os.write(os.STDOUT_FILENO, "\x1b[?1049h");
     // Save cursor and attributes
@@ -147,71 +150,49 @@ pub fn eraseLineEndBuffered() !void {
 
 pub fn setFgColorBuffered(color: Color) !void {
     var buf: [19]u8 = undefined;
-    switch (color) {
-        ColorType.color_default => try writeBuffered("\x1b[39;m"),
-        ColorType.color_8 => |val| try writeBuffered(try std.fmt.bufPrint(
-            &buf,
-            "\x1b[{d}m",
-            .{30 + val.ordinal()},
-        )),
-        ColorType.color_16 => |val| switch (val.ordinal()) {
-            0...7 => |i| try writeBuffered(
-                try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{30 + i}),
+    switch (color.kind) {
+        .default => try writeBuffered("\x1b[39;m"),
+        .extended => |val| switch (val) {
+            0...7 => try writeBuffered(
+                try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{30 + val}),
             ),
-            8...15 => |i| {
-                // Try both methods of "bright" colors for compatibility
-                try writeBuffered(
-                    try std.fmt.bufPrint(&buf, "\x1b[1;{d}m", .{30 + i}),
-                );
-                try writeBuffered(
-                    try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{90 + i}),
-                );
-            },
-            else => unreachable,
+            8...15 => try writeBuffered(
+                try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{90 + val - 8}),
+            ),
+            else => try writeBuffered(
+                try std.fmt.bufPrint(&buf, "\x1b[38;5;{d}m", .{val}),
+            ),
         },
-        ColorType.color_256 => |val| try writeBuffered(
-            try std.fmt.bufPrint(&buf, "\x1b[38;5;{d}m", .{val}),
-        ),
-        ColorType.color_rgb => |rgb| try writeBuffered(try std.fmt.bufPrint(
+        .rgb => |rgb| try writeBuffered(try std.fmt.bufPrint(
             &buf,
             "\x1b[38;2;{d};{d};{d};m",
             .{ rgb.red, rgb.green, rgb.blue },
         )),
+        .none => return,
     }
 }
 
 pub fn setBgColorBuffered(color: Color) !void {
     var buf: [19]u8 = undefined;
-    switch (color) {
-        ColorType.color_default => try writeBuffered("\x1b[49;m"),
-        ColorType.color_8 => |val| try writeBuffered(try std.fmt.bufPrint(
-            &buf,
-            "\x1b[{d}m",
-            .{40 + val.ordinal()},
-        )),
-        ColorType.color_16 => |val| switch (val.ordinal()) {
-            0...7 => |i| try writeBuffered(
-                try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{40 + i}),
+    switch (color.kind) {
+        .default => try writeBuffered("\x1b[49;m"),
+        .extended => |val| switch (val) {
+            0...7 => try writeBuffered(
+                try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{40 + val}),
             ),
-            8...15 => |i| {
-                // Try both methods of "bright" colors for compatibility
-                try writeBuffered(
-                    try std.fmt.bufPrint(&buf, "\x1b[1;{d}m", .{40 + i}),
-                );
-                try writeBuffered(
-                    try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{100 + i}),
-                );
-            },
-            else => unreachable,
+            8...15 => try writeBuffered(
+                try std.fmt.bufPrint(&buf, "\x1b[{d}m", .{100 + val - 8}),
+            ),
+            else => try writeBuffered(
+                try std.fmt.bufPrint(&buf, "\x1b[48;5;{d}m", .{val}),
+            ),
         },
-        ColorType.color_256 => |val| try writeBuffered(
-            try std.fmt.bufPrint(&buf, "\x1b[48;5;{d}m", .{val}),
-        ),
-        ColorType.color_rgb => |rgb| try writeBuffered(try std.fmt.bufPrint(
+        .rgb => |rgb| try writeBuffered(try std.fmt.bufPrint(
             &buf,
             "\x1b[48;2;{d};{d};{d};m",
             .{ rgb.red, rgb.green, rgb.blue },
         )),
+        .none => return,
     }
 }
 

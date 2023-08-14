@@ -3,20 +3,17 @@ pub const io = @import("io.zig");
 pub const ui = @import("ui.zig");
 
 const std = @import("std");
+const config = core.config;
+const term = io.term;
+const editor = core.editor;
 
-const fs = std.fs;
-const os = std.os;
-const mem = std.mem;
-const ascii = std.ascii;
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
 
 const Key = io.key.Key;
-const term = io.term;
-const config = core.config;
 const FileBuffer = core.FileBuffer;
-const Color = core.color.Color;
-const ColorDefault = core.color.ColorDefault;
-
-const ArrayList = std.ArrayList;
+const Color = core.Color;
+const StatusBar = ui.StatusBar;
 
 const FE_QUIT_TIMES = 3;
 const FE_QUERY_LEN = 256;
@@ -46,11 +43,11 @@ const Row = struct {
 };
 
 const Highlight = enum(u8) {
-    number = 31,
-    match = 34,
-    string = 35,
-    comment = 36,
-    normal = 37,
+    number = 1,
+    match = 4,
+    string = 5,
+    comment = 6,
+    normal = 7,
 };
 
 const Syntax = enum { zig };
@@ -63,7 +60,7 @@ fn isSeparator(c: u8) bool {
 const Editor = struct {
     const Self = @This();
 
-    allocator: mem.Allocator,
+    allocator: Allocator,
     file_path: []const u8,
     file_buffer: FileBuffer,
     rows: ArrayList(Row),
@@ -74,15 +71,19 @@ const Editor = struct {
     cy: usize = 0,
     row_offset: usize = 0,
     col_offset: usize = 0,
+    status_bar: StatusBar,
     status_message: ArrayList(u8),
 
-    fn init(allocator: mem.Allocator) !Self {
+    fn init(allocator: Allocator) !Self {
         try term.init();
+        errdefer term.deinit();
+        editor.init(allocator);
         return Self{
             .allocator = allocator,
             .file_path = undefined,
             .file_buffer = undefined,
             .rows = ArrayList(Row).init(allocator),
+            .status_bar = .{ .cols = term.size.cols },
             .status_message = try ArrayList(u8).initCapacity(allocator, 80),
         };
     }
@@ -117,7 +118,7 @@ const Editor = struct {
                 }
             }
 
-            if (!ascii.isPrint(row.render[i])) {
+            if (!std.ascii.isPrint(row.render[i])) {
                 row.hl[i] = Highlight.normal;
                 prev_sep = false;
                 continue;
@@ -151,7 +152,7 @@ const Editor = struct {
     // Load the specified program in the editor memory.
     fn open(self: *Self, file_path: []const u8) !void {
         self.file_path = file_path;
-        const file = try fs.cwd().createFile(self.file_path, .{
+        const file = try std.fs.cwd().createFile(self.file_path, .{
             .read = true,
             .truncate = false,
         });
@@ -181,7 +182,7 @@ const Editor = struct {
         row.src = try self.allocator.realloc(row.src[0..len], len + s_len);
         _ = self.allocator.resize(row.src[0..len], len + s_len);
 
-        mem.copy(u8, row.src[len .. len + s_len], s);
+        std.mem.copy(u8, row.src[len .. len + s_len], s);
 
         try self.updateRow(row);
         self.dirty = true;
@@ -234,7 +235,11 @@ const Editor = struct {
     fn rowDelChar(self: *Self, row: *Row, at: usize) !void {
         if (row.src.len <= at) return;
 
-        mem.copy(u8, row.src[at..row.src.len], row.src[at + 1 .. row.src.len]);
+        std.mem.copy(
+            u8,
+            row.src[at..row.src.len],
+            row.src[at + 1 .. row.src.len],
+        );
         try self.updateRow(row);
         row.src.len -= 1;
         self.dirty = true;
@@ -325,8 +330,8 @@ const Editor = struct {
         len = 0;
         var prev_len: usize = 0;
         for (self.rows.items) |row| {
-            mem.copy(u8, buf[prev_len .. prev_len + row.src.len], row.src);
-            mem.copy(
+            std.mem.copy(u8, buf[prev_len .. prev_len + row.src.len], row.src);
+            std.mem.copy(
                 u8,
                 buf[prev_len + row.src.len .. prev_len + row.src.len + 1],
                 "\n",
@@ -342,7 +347,7 @@ const Editor = struct {
         const buf = try self.rowsToString();
         defer self.allocator.free(buf);
 
-        const file = try fs.cwd().createFile(
+        const file = try std.fs.cwd().createFile(
             self.file_path,
             .{
                 .read = true,
@@ -376,7 +381,7 @@ const Editor = struct {
                     return;
                 }
                 term.deinit();
-                os.exit(0);
+                std.os.exit(0);
             },
             .ctrl_s => {
                 self.save() catch |err| {
@@ -442,6 +447,7 @@ const Editor = struct {
     }
 
     fn deinit(self: *Self) void {
+        editor.deinit();
         term.deinit();
         for (self.rows.items) |row| {
             self.allocator.free(row.src);
@@ -525,7 +531,7 @@ const Editor = struct {
                                 var color = @intFromEnum(hl);
                                 if (color != current_color) {
                                     try term.setFgColorBuffered(
-                                        Color.init16(@enumFromInt(color - 30)),
+                                        Color.Extended(color),
                                     );
                                     current_color = color;
                                 }
@@ -536,7 +542,7 @@ const Editor = struct {
                         }
                     }
                 }
-                try term.setFgColorBuffered(Color.initDefault());
+                try term.setFgColorBuffered(Color.Default);
                 try term.eraseLineEndBuffered();
                 try term.writeNewlineBuffered();
             }
@@ -544,33 +550,13 @@ const Editor = struct {
 
         // Create a two status rows status. First row:
         try term.eraseLineEndBuffered();
-        try term.writeBuffered("\x1b[7m");
-        var rstatus: [80]u8 = undefined;
-        var modified: []const u8 = if (self.dirty) "(modified)" else "";
 
-        var status = try std.fmt.allocPrint(
-            self.allocator,
-            "{s} - {d} lines {s}",
-            .{ self.file_path, self.rows.items.len, modified },
+        try self.status_bar.drawBuffered(
+            self.row_offset + self.cy,
+            self.col_offset + self.cx,
+            .view,
         );
-        var len = if (status.len > term.size.cols)
-            term.size.cols
-        else
-            status.len;
-        _ = try std.fmt.bufPrint(&rstatus, "{d}/{d}", .{
-            self.row_offset + self.cy + 1,
-            self.rows.items.len,
-        });
-        try term.writeBuffered(status[0..status.len]);
 
-        for (len..term.size.cols) |_| {
-            if (term.size.cols - len == rstatus.len) {
-                try term.writeBuffered(&rstatus);
-                break;
-            } else {
-                try term.writeBuffered(" ");
-            }
-        }
         try term.resetStyleBuffered();
         try term.writeNewlineBuffered();
 
@@ -698,16 +684,16 @@ pub fn main() !void {
     var allocator = gpa.allocator();
     defer _ = gpa.deinit();
 
-    var editor = try Editor.init(allocator);
-    defer editor.deinit();
+    var e = try Editor.init(allocator);
+    defer e.deinit();
     try term.pollSize();
-    try editor.open(file_path);
-    editor.file_buffer = try io.fs.open(allocator, file_path);
-    defer editor.file_buffer.deinit();
+    try e.open(file_path);
+    e.file_buffer = try io.fs.open(allocator, file_path);
+    defer e.file_buffer.deinit();
 
-    try editor.setStatusMessage("HELP: Ctrl-S = save | Ctrl-C = quit", .{});
+    try e.setStatusMessage("HELP: Ctrl-S = save | Ctrl-C = quit", .{});
     while (true) {
-        try editor.refreshScreen();
-        try editor.processKeypress();
+        try e.refreshScreen();
+        try e.processKeypress();
     }
 }
